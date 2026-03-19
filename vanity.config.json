@@ -1,0 +1,26 @@
+{
+  "engine": "cpu",
+  "patterns": {
+    "prefix_file": "patterns/prefixes/example.txt",
+    "suffix_file": "patterns/suffixes/example.txt"
+  },
+  "output": {
+    "results_file": "runs/matches.jsonl",
+    "single_keypair_file": "runs/vanity-keypair.json",
+    "private_key_formats": ["base58"],
+    "write_match_files": false,
+    "matches_dir": "runs/matches"
+  },
+  "cpu": {
+    "threads": 0,
+    "report_every": 2,
+    "max_attempts": 0,
+    "keep_running": true
+  },
+  "gpu": {
+    "cuda_arch": "sm_89",
+    "attempts_per_execution": 100000,
+    "max_iterations": 0,
+    "max_matches": 0
+  }
+}
