@@ -137,6 +137,8 @@ fn main() -> Result<()> {
         );
     }
 
+    let average_attempts_estimate = estimate_average_attempts(&filters);
+
     println!();
     println!("Press Ctrl+C to stop.");
 
@@ -245,13 +247,15 @@ fn main() -> Result<()> {
                 let elapsed = start.elapsed();
                 let rate = total as f64 / elapsed.as_secs_f64().max(0.001);
                 let found = matches_found.load(Ordering::Relaxed);
+                let eta_seconds = average_attempts_estimate / rate.max(1.0);
 
                 println!(
-                    "Tried {} addresses in {} ({}/s, {} matches)",
+                    "Progress      : Tried {} in {} at {} ({} matches) - ETA ~ {}/match",
                     human_int(total),
                     format_duration_human(elapsed.as_secs_f64()),
-                    human_int(rate.round() as u64),
-                    human_int(found as u64)
+                    format_rate_human(rate),
+                    human_int(found as u64),
+                    format_duration_brief(eta_seconds)
                 );
 
                 if let Some(limit) = cli.max_attempts {
@@ -423,6 +427,65 @@ fn shortest_constraint_len(filters: &TargetFilters) -> Option<usize> {
     let prefix_len = filters.prefixes.iter().map(String::len).min().unwrap_or(0);
     let suffix_len = filters.suffixes.iter().map(String::len).min().unwrap_or(0);
     Some(prefix_len + suffix_len)
+}
+
+fn estimate_average_attempts(filters: &TargetFilters) -> f64 {
+    let effective_prefixes = minimize_prefix_patterns(&filters.prefixes);
+    let effective_suffixes = minimize_suffix_patterns(&filters.suffixes);
+    let prefix_probability = pattern_probability(&effective_prefixes);
+    let suffix_probability = pattern_probability(&effective_suffixes);
+    let combined_probability = prefix_probability * suffix_probability;
+
+    if combined_probability > 0.0 {
+        1.0 / combined_probability
+    } else {
+        f64::INFINITY
+    }
+}
+
+fn minimize_prefix_patterns(patterns: &[String]) -> Vec<String> {
+    let mut sorted = patterns.to_vec();
+    sorted.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+
+    let mut minimized = Vec::new();
+    'outer: for pattern in sorted {
+        for existing in &minimized {
+            if pattern.starts_with(existing) {
+                continue 'outer;
+            }
+        }
+        minimized.push(pattern);
+    }
+
+    minimized
+}
+
+fn minimize_suffix_patterns(patterns: &[String]) -> Vec<String> {
+    let mut sorted = patterns.to_vec();
+    sorted.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+
+    let mut minimized = Vec::new();
+    'outer: for pattern in sorted {
+        for existing in &minimized {
+            if pattern.ends_with(existing) {
+                continue 'outer;
+            }
+        }
+        minimized.push(pattern);
+    }
+
+    minimized
+}
+
+fn pattern_probability(patterns: &[String]) -> f64 {
+    if patterns.is_empty() {
+        return 1.0;
+    }
+
+    patterns
+        .iter()
+        .map(|pattern| 58_f64.powi(-(pattern.len() as i32)))
+        .sum()
 }
 
 fn preview_fragments(fragments: &[String]) -> String {
@@ -837,4 +900,38 @@ fn format_duration_human(seconds: f64) -> String {
     }
 
     format!("{:.1}y", seconds / 31_557_600.0)
+}
+
+fn format_duration_brief(seconds: f64) -> String {
+    if !seconds.is_finite() {
+        return "unknown".to_string();
+    }
+    if seconds < 1.0 {
+        return "<1s".to_string();
+    }
+    if seconds < 60.0 {
+        return format!("{seconds:.0}s");
+    }
+    if seconds < 3600.0 {
+        return format!("{:.1}m", seconds / 60.0);
+    }
+    if seconds < 86_400.0 {
+        return format!("{:.1}h", seconds / 3600.0);
+    }
+
+    format!("{:.1}d", seconds / 86_400.0)
+}
+
+fn format_rate_human(rate: f64) -> String {
+    if rate >= 1_000_000_000.0 {
+        return format!("{:.2} G addr/s", rate / 1_000_000_000.0);
+    }
+    if rate >= 1_000_000.0 {
+        return format!("{:.2} M addr/s", rate / 1_000_000.0);
+    }
+    if rate >= 1_000.0 {
+        return format!("{:.2} K addr/s", rate / 1_000.0);
+    }
+
+    format!("{:.0} addr/s", rate)
 }

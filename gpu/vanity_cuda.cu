@@ -295,11 +295,11 @@ PatternStats estimate_pattern_stats() {
 std::string format_rate(double cps) {
     char buffer[64];
     if (cps >= 1'000'000'000.0) {
-        std::snprintf(buffer, sizeof(buffer), "%.2f Gaddr/s", cps / 1'000'000'000.0);
+        std::snprintf(buffer, sizeof(buffer), "%.2f G addr/s", cps / 1'000'000'000.0);
     } else if (cps >= 1'000'000.0) {
-        std::snprintf(buffer, sizeof(buffer), "%.2f Maddr/s", cps / 1'000'000.0);
+        std::snprintf(buffer, sizeof(buffer), "%.2f M addr/s", cps / 1'000'000.0);
     } else if (cps >= 1'000.0) {
-        std::snprintf(buffer, sizeof(buffer), "%.2f Kaddr/s", cps / 1'000.0);
+        std::snprintf(buffer, sizeof(buffer), "%.2f K addr/s", cps / 1'000.0);
     } else {
         std::snprintf(buffer, sizeof(buffer), "%.0f addr/s", cps);
     }
