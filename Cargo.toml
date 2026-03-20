@@ -2,9 +2,11 @@
 name = "solana-vanity"
 version = "0.1.0"
 edition = "2024"
-description = "Config-driven Solana vanity address generator with CPU and CUDA GPU engines."
+description = "VanityForge: config-driven Solana vanity address generator with CPU and CUDA GPU engines."
 license = "Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/0xD3bt/vanityforge"
+homepage = "https://github.com/0xD3bt/vanityforge"
 keywords = ["solana", "vanity", "crypto", "cuda", "gpu"]
 categories = ["command-line-utilities", "cryptography"]
 exclude = [

@@ -1,5 +1,6 @@
 /target
 /runs
+/private
 /gpu/bin
 /gpu/generated_config.h
 /vendor-solanity/.git/

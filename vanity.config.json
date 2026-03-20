@@ -6,10 +6,10 @@
   },
   "output": {
     "results_file": "runs/matches.jsonl",
-    "single_keypair_file": "runs/vanity-keypair.json",
-    "private_key_formats": ["base58"],
+    "single_keypair_file": "private/vanity-keypair.json",
+    "private_key_formats": ["none"],
     "write_match_files": false,
-    "matches_dir": "runs/matches"
+    "matches_dir": "private/matches"
   },
   "cpu": {
     "threads": 0,

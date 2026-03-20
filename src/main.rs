@@ -54,7 +54,7 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     write_match_files: bool,
 
-    /// Private key output formats: base58, solana-json, seed-base58, seed-hex, or all.
+    /// Private key output formats: none, base58, solana-json, seed-base58, seed-hex, or all.
     #[arg(long = "private-key-format", value_delimiter = ',', action = ArgAction::Append)]
     private_key_format: Vec<String>,
 
@@ -707,7 +707,7 @@ fn seed_hex(keypair_bytes: &[u8]) -> String {
 }
 
 fn parse_key_formats(values: &[String]) -> Result<KeyFormatSelection> {
-    let defaults = vec!["base58".to_string()];
+    let defaults = vec!["none".to_string()];
     let values = if values.is_empty() { &defaults } else { values };
 
     let mut selection = KeyFormatSelection {
@@ -719,6 +719,7 @@ fn parse_key_formats(values: &[String]) -> Result<KeyFormatSelection> {
 
     for value in values {
         match value.as_str() {
+            "none" => {}
             "base58" => selection.base58 = true,
             "solana-json" => selection.solana_json = true,
             "seed-base58" => selection.seed_base58 = true,
@@ -730,7 +731,7 @@ fn parse_key_formats(values: &[String]) -> Result<KeyFormatSelection> {
                 selection.seed_hex = true;
             }
             other => bail!(
-                "Unknown private key format '{other}'. Use base58, solana-json, seed-base58, seed-hex, or all."
+                "Unknown private key format '{other}'. Use none, base58, solana-json, seed-base58, seed-hex, or all."
             ),
         }
     }
@@ -752,7 +753,11 @@ fn describe_key_formats(selection: &KeyFormatSelection) -> String {
     if selection.seed_hex {
         parts.push("seed-hex");
     }
-    parts.join(", ")
+    if parts.is_empty() {
+        "none".to_string()
+    } else {
+        parts.join(", ")
+    }
 }
 
 fn print_written_paths(paths: &WrittenPaths) {

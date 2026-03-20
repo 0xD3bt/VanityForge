@@ -35,8 +35,8 @@ struct Options {
     unsigned long long attempts_per_execution = 100000;
     unsigned long long max_iterations = 0;
     unsigned long long max_matches = 0;
-    bool emit_base58 = true;
-    bool emit_solana_json = true;
+    bool emit_base58 = false;
+    bool emit_solana_json = false;
     bool emit_seed_base58 = false;
     bool emit_seed_hex = false;
     bool private_key_formats_explicit = false;
@@ -50,7 +50,7 @@ void print_usage() {
         "  --attempts-per-execution <n>  Keys tested per GPU thread per launch\n"
         "  --max-iterations <n>          Stop after this many kernel launches\n"
         "  --max-matches <n>             Stop after this many matches\n"
-        "  --private-key-format <name>   base58, solana-json, seed-base58, seed-hex, or all\n"
+        "  --private-key-format <name>   none, base58, solana-json, seed-base58, seed-hex, or all\n"
         "  --verbose                     Enable debug logging\n"
         "  --help                        Show this message\n"
     );
@@ -65,7 +65,9 @@ void apply_private_key_format(Options& options, const char* format) {
         options.private_key_formats_explicit = true;
     }
 
-    if (std::strcmp(format, "base58") == 0) {
+    if (std::strcmp(format, "none") == 0) {
+        return;
+    } else if (std::strcmp(format, "base58") == 0) {
         options.emit_base58 = true;
     } else if (std::strcmp(format, "solana-json") == 0) {
         options.emit_solana_json = true;
@@ -81,7 +83,7 @@ void apply_private_key_format(Options& options, const char* format) {
     } else {
         std::fprintf(
             stderr,
-            "Unknown private key format: %s. Use base58, solana-json, seed-base58, seed-hex, or all.\n",
+            "Unknown private key format: %s. Use none, base58, solana-json, seed-base58, seed-hex, or all.\n",
             format
         );
         std::exit(1);
