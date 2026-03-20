@@ -40,9 +40,7 @@ if ($resultsDir) {
 $privateKeyFormats = Get-PrivateKeyFormats $config.output
 
 & (Join-Path $PSScriptRoot "build.ps1") `
-    -PrefixFile $config.patterns.prefix_file `
-    -SuffixFile $config.patterns.suffix_file `
-    -CudaArch $config.gpu.cuda_arch
+    -ConfigPath $ConfigPath
 
 $binary = Join-Path $root "gpu\bin\solana-vanity-gpu.exe"
 $args = @("--attempts-per-execution", [string]$config.gpu.attempts_per_execution)

@@ -57,6 +57,11 @@ struct PatternStats {
     double average_attempts = 1.0;
 };
 
+struct HostPattern {
+    std::string value;
+    int group = 0;
+};
+
 void print_usage() {
     std::printf(
         "Usage: gpu\\\\bin\\\\solana-vanity-gpu.exe [options]\n\n"
@@ -220,39 +225,43 @@ std::vector<std::string> minimize_suffix_patterns(const std::vector<std::string>
     return minimized;
 }
 
-std::vector<std::string> load_prefix_patterns() {
+std::vector<HostPattern> load_prefix_patterns() {
     if (GPU_PREFIX_COUNT == 0) {
         return {};
     }
 
     int host_lengths[GPU_PREFIX_COUNT] = {};
-    char host_patterns[GPU_PREFIX_COUNT][16] = {};
+    int host_groups[GPU_PREFIX_COUNT] = {};
+    char host_patterns[GPU_PREFIX_COUNT][32] = {};
     CUDA_CHK(cudaMemcpyFromSymbol(host_lengths, GPU_PREFIX_LENGTHS, sizeof(host_lengths)));
+    CUDA_CHK(cudaMemcpyFromSymbol(host_groups, GPU_PREFIX_GROUPS, sizeof(host_groups)));
     CUDA_CHK(cudaMemcpyFromSymbol(host_patterns, GPU_PREFIXES, sizeof(host_patterns)));
 
-    std::vector<std::string> patterns;
+    std::vector<HostPattern> patterns;
     patterns.reserve(GPU_PREFIX_COUNT);
     for (int i = 0; i < GPU_PREFIX_COUNT; ++i) {
-        patterns.emplace_back(host_patterns[i], host_lengths[i]);
+        patterns.push_back({std::string(host_patterns[i], host_lengths[i]), host_groups[i]});
     }
 
     return patterns;
 }
 
-std::vector<std::string> load_suffix_patterns() {
+std::vector<HostPattern> load_suffix_patterns() {
     if (GPU_SUFFIX_COUNT == 0) {
         return {};
     }
 
     int host_lengths[GPU_SUFFIX_COUNT] = {};
-    char host_patterns[GPU_SUFFIX_COUNT][16] = {};
+    int host_groups[GPU_SUFFIX_COUNT] = {};
+    char host_patterns[GPU_SUFFIX_COUNT][32] = {};
     CUDA_CHK(cudaMemcpyFromSymbol(host_lengths, GPU_SUFFIX_LENGTHS, sizeof(host_lengths)));
+    CUDA_CHK(cudaMemcpyFromSymbol(host_groups, GPU_SUFFIX_GROUPS, sizeof(host_groups)));
     CUDA_CHK(cudaMemcpyFromSymbol(host_patterns, GPU_SUFFIXES, sizeof(host_patterns)));
 
-    std::vector<std::string> patterns;
+    std::vector<HostPattern> patterns;
     patterns.reserve(GPU_SUFFIX_COUNT);
     for (int i = 0; i < GPU_SUFFIX_COUNT; ++i) {
-        patterns.emplace_back(host_patterns[i], host_lengths[i]);
+        patterns.push_back({std::string(host_patterns[i], host_lengths[i]), host_groups[i]});
     }
 
     return patterns;
@@ -275,14 +284,45 @@ PatternStats estimate_pattern_stats() {
 
     auto prefix_patterns = load_prefix_patterns();
     auto suffix_patterns = load_suffix_patterns();
-    auto effective_prefixes = minimize_prefix_patterns(prefix_patterns);
-    auto effective_suffixes = minimize_suffix_patterns(suffix_patterns);
 
-    stats.effective_prefixes = static_cast<int>(effective_prefixes.size());
-    stats.effective_suffixes = static_cast<int>(effective_suffixes.size());
-    stats.prefix_probability = pattern_probability(effective_prefixes);
-    stats.suffix_probability = pattern_probability(effective_suffixes);
-    stats.combined_probability = stats.prefix_probability * stats.suffix_probability;
+    std::vector<int> groups;
+    groups.reserve(prefix_patterns.size() + suffix_patterns.size());
+    for (const auto& pattern : prefix_patterns) {
+        if (std::find(groups.begin(), groups.end(), pattern.group) == groups.end()) {
+            groups.push_back(pattern.group);
+        }
+    }
+    for (const auto& pattern : suffix_patterns) {
+        if (std::find(groups.begin(), groups.end(), pattern.group) == groups.end()) {
+            groups.push_back(pattern.group);
+        }
+    }
+
+    for (int group : groups) {
+        std::vector<std::string> group_prefixes;
+        std::vector<std::string> group_suffixes;
+
+        for (const auto& pattern : prefix_patterns) {
+            if (pattern.group == group) {
+                group_prefixes.push_back(pattern.value);
+            }
+        }
+        for (const auto& pattern : suffix_patterns) {
+            if (pattern.group == group) {
+                group_suffixes.push_back(pattern.value);
+            }
+        }
+
+        auto effective_prefixes = minimize_prefix_patterns(group_prefixes);
+        auto effective_suffixes = minimize_suffix_patterns(group_suffixes);
+
+        stats.effective_prefixes += static_cast<int>(effective_prefixes.size());
+        stats.effective_suffixes += static_cast<int>(effective_suffixes.size());
+        stats.prefix_probability += pattern_probability(effective_prefixes);
+        stats.suffix_probability += pattern_probability(effective_suffixes);
+        stats.combined_probability += pattern_probability(effective_prefixes) * pattern_probability(effective_suffixes);
+    }
+
     if (stats.combined_probability > 0.0) {
         stats.average_attempts = 1.0 / stats.combined_probability;
     } else {
@@ -530,7 +570,8 @@ __global__ void vanity_scan(
         int suffix_index = -1;
 
         if (prefix_matches(address, key_len, &prefix_index)
-            && suffix_matches(address, key_len, &suffix_index)) {
+            && suffix_matches(address, key_len, &suffix_index)
+            && GPU_PREFIX_GROUPS[prefix_index] == GPU_SUFFIX_GROUPS[suffix_index]) {
             atomicAdd(keys_found, 1);
 
             const bool need_keypair_bytes = emit_base58 || emit_solana_json;

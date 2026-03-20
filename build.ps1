@@ -22,16 +22,12 @@ switch ($Engine) {
     }
     "gpu" {
         & (Join-Path $root "gpu\build.ps1") `
-            -PrefixFile $config.patterns.prefix_file `
-            -SuffixFile $config.patterns.suffix_file `
-            -CudaArch $config.gpu.cuda_arch
+            -ConfigPath $ConfigPath
     }
     "all" {
         & (Join-Path $root "cpu\build.ps1")
         & (Join-Path $root "gpu\build.ps1") `
-            -PrefixFile $config.patterns.prefix_file `
-            -SuffixFile $config.patterns.suffix_file `
-            -CudaArch $config.gpu.cuda_arch
+            -ConfigPath $ConfigPath
     }
     default {
         throw "Unknown engine: $Engine. Use 'cpu', 'gpu', or 'all'."

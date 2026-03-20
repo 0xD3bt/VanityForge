@@ -488,6 +488,10 @@ vanity generate -Word "Moonwalker" -OutputPath "patterns/prefixes/moonwalker.txt
 vanity generate -PrefixWord "Nova" -SuffixWord "core" -UpdateConfig -ConfigPath "my-vanity.config.json" -Quiet
 ```
 
+```powershell
+vanity generate -GroupedSpecPath ".local/configs/grouped-variant-smoke-spec.json" -ConfigPath ".local/configs/my-grouped-search.config.json" -UpdateConfig
+```
+
 Notes:
 
 - only Base58-valid characters are emitted
@@ -496,6 +500,7 @@ Notes:
 - use `-PrefixWord` and `-SuffixWord` when you want smaller, more practical pattern sets
 - use `-Quiet` when you only want the summary, warnings, and output paths
 - `-UpdateConfig` writes generated files and updates `patterns.prefix_file` and `patterns.suffix_file`
+- `-GroupedSpecPath` generates multiple isolated prefix/suffix rule pairs and writes a grouped `rules` config
 - `-Run` starts a bounded smoke test only and refuses unbounded configs
 - use `.\run.ps1` for full searches
 - in single-word mode, `-UpdateConfig` sets the prefix file and creates an intentionally empty suffix file
@@ -503,9 +508,11 @@ Notes:
 
 GPU-specific pattern limits:
 
-- maximum `128` prefixes
-- maximum `32` suffixes
-- maximum pattern length `15` characters per entry
+- maximum `256` prefixes
+- maximum `128` suffixes
+- maximum pattern length `31` characters per entry
+
+In grouped mode, those GPU limits apply to the flattened total across all rule entries, not per rule.
 
 If you need larger pattern sets or longer entries, use the CPU engine.
 

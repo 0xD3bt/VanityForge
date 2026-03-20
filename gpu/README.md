@@ -61,6 +61,6 @@ powershell -ExecutionPolicy Bypass -File .\gpu\run.ps1 -ConfigPath .local\config
 - the build script forces the Visual Studio x64 toolchain for CUDA on Windows
 - `gpu.max_iterations: 0` means unlimited kernel launches
 - `gpu.max_matches: 0` means unlimited matches
-- GPU pattern limits are `128` prefixes, `32` suffixes, and `15` characters per entry
+- GPU pattern limits are `256` prefixes, `128` suffixes, and `31` characters per entry
 - `output.private_key_formats` currently defaults to `["base58"]`, so GPU JSONL output should be treated as secret-bearing unless you switch to `["none"]`
 - the scanner is derived from Apache-licensed CUDA Solana `ed25519` code from `vendor-solanity`

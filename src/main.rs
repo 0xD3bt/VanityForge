@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{ArgAction, Parser};
 use ed25519_dalek::SigningKey;
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
@@ -65,10 +65,21 @@ struct Cli {
     /// Output path for the Solana keypair JSON.
     #[arg(long, default_value = "vanity-keypair.json")]
     out: PathBuf,
+
+    /// Optional config file path used to load grouped prefix/suffix rule pairs.
+    #[arg(long)]
+    grouped_rules_config: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
 struct TargetFilters {
+    prefixes: Vec<String>,
+    suffixes: Vec<String>,
+    grouped_rules: Vec<RuleGroup>,
+}
+
+#[derive(Debug, Clone)]
+struct RuleGroup {
     prefixes: Vec<String>,
     suffixes: Vec<String>,
 }
@@ -320,6 +331,13 @@ fn main() -> Result<()> {
 }
 
 fn build_filters(cli: &Cli) -> Result<TargetFilters> {
+    if let Some(config_path) = &cli.grouped_rules_config {
+        if !cli.prefix.is_empty() || !cli.suffix.is_empty() {
+            bail!("Do not combine grouped rule config with --prefix or --suffix");
+        }
+        return load_grouped_rules_from_config(config_path);
+    }
+
     let prefixes = normalize_fragments(cli.prefix.clone());
     let suffixes = normalize_fragments(cli.suffix.clone());
 
@@ -330,12 +348,16 @@ fn build_filters(cli: &Cli) -> Result<TargetFilters> {
         validate_fragment("suffix", suffix)?;
     }
 
-    Ok(TargetFilters { prefixes, suffixes })
+    Ok(TargetFilters {
+        prefixes,
+        suffixes,
+        grouped_rules: Vec::new(),
+    })
 }
 
 fn validate_inputs(cli: &Cli, filters: &TargetFilters) -> Result<()> {
-    if filters.prefixes.is_empty() && filters.suffixes.is_empty() {
-        bail!("Provide at least one of --prefix or --suffix");
+    if filters.grouped_rules.is_empty() && filters.prefixes.is_empty() && filters.suffixes.is_empty() {
+        bail!("Provide at least one of --prefix or --suffix, or use --grouped-rules-config");
     }
 
     if cli.report_every == 0 {
@@ -374,6 +396,40 @@ fn validate_fragment(label: &str, value: &str) -> Result<()> {
 }
 
 fn match_address(address: &str, filters: &TargetFilters) -> Option<(Option<String>, Option<String>)> {
+    if !filters.grouped_rules.is_empty() {
+        for rule in &filters.grouped_rules {
+            let matched_prefix = if rule.prefixes.is_empty() {
+                None
+            } else {
+                match rule
+                    .prefixes
+                    .iter()
+                    .find(|prefix| address.starts_with(prefix.as_str()))
+                {
+                    Some(prefix) => Some(prefix.clone()),
+                    None => continue,
+                }
+            };
+
+            let matched_suffix = if rule.suffixes.is_empty() {
+                None
+            } else {
+                match rule
+                    .suffixes
+                    .iter()
+                    .find(|suffix| address.ends_with(suffix.as_str()))
+                {
+                    Some(suffix) => Some(suffix.clone()),
+                    None => continue,
+                }
+            };
+
+            return Some((matched_prefix, matched_suffix));
+        }
+
+        return None;
+    }
+
     let matched_prefix = if filters.prefixes.is_empty() {
         None
     } else {
@@ -420,6 +476,21 @@ fn normalize_fragments(fragments: Vec<String>) -> Vec<String> {
 }
 
 fn shortest_constraint_len(filters: &TargetFilters) -> Option<usize> {
+    if !filters.grouped_rules.is_empty() {
+        return filters
+            .grouped_rules
+            .iter()
+            .filter_map(|rule| {
+                if rule.prefixes.is_empty() && rule.suffixes.is_empty() {
+                    return None;
+                }
+                let prefix_len = rule.prefixes.iter().map(String::len).min().unwrap_or(0);
+                let suffix_len = rule.suffixes.iter().map(String::len).min().unwrap_or(0);
+                Some(prefix_len + suffix_len)
+            })
+            .min();
+    }
+
     if filters.prefixes.is_empty() && filters.suffixes.is_empty() {
         return None;
     }
@@ -430,6 +501,24 @@ fn shortest_constraint_len(filters: &TargetFilters) -> Option<usize> {
 }
 
 fn estimate_average_attempts(filters: &TargetFilters) -> f64 {
+    if !filters.grouped_rules.is_empty() {
+        let combined_probability: f64 = filters
+            .grouped_rules
+            .iter()
+            .map(|rule| {
+                let effective_prefixes = minimize_prefix_patterns(&rule.prefixes);
+                let effective_suffixes = minimize_suffix_patterns(&rule.suffixes);
+                pattern_probability(&effective_prefixes) * pattern_probability(&effective_suffixes)
+            })
+            .sum();
+
+        if combined_probability > 0.0 {
+            return 1.0 / combined_probability;
+        }
+
+        return f64::INFINITY;
+    }
+
     let effective_prefixes = minimize_prefix_patterns(&filters.prefixes);
     let effective_suffixes = minimize_suffix_patterns(&filters.suffixes);
     let prefix_probability = pattern_probability(&effective_prefixes);
@@ -447,10 +536,10 @@ fn minimize_prefix_patterns(patterns: &[String]) -> Vec<String> {
     let mut sorted = patterns.to_vec();
     sorted.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
 
-    let mut minimized = Vec::new();
+    let mut minimized: Vec<String> = Vec::new();
     'outer: for pattern in sorted {
         for existing in &minimized {
-            if pattern.starts_with(existing) {
+            if pattern.starts_with(existing.as_str()) {
                 continue 'outer;
             }
         }
@@ -464,10 +553,10 @@ fn minimize_suffix_patterns(patterns: &[String]) -> Vec<String> {
     let mut sorted = patterns.to_vec();
     sorted.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
 
-    let mut minimized = Vec::new();
+    let mut minimized: Vec<String> = Vec::new();
     'outer: for pattern in sorted {
         for existing in &minimized {
-            if pattern.ends_with(existing) {
+            if pattern.ends_with(existing.as_str()) {
                 continue 'outer;
             }
         }
@@ -475,6 +564,76 @@ fn minimize_suffix_patterns(patterns: &[String]) -> Vec<String> {
     }
 
     minimized
+}
+
+fn load_grouped_rules_from_config(config_path: &PathBuf) -> Result<TargetFilters> {
+    let config_text = fs::read_to_string(config_path)
+        .with_context(|| format!("failed to read grouped rule config {}", config_path.display()))?;
+    let config_json: serde_json::Value = serde_json::from_str(&config_text)
+        .with_context(|| format!("failed to parse grouped rule config {}", config_path.display()))?;
+
+    let rules = config_json
+        .get("rules")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow!("grouped rule config is missing a non-empty 'rules' array"))?;
+
+    let mut grouped_rules = Vec::new();
+    let mut all_prefixes = Vec::new();
+    let mut all_suffixes = Vec::new();
+
+    for (idx, rule) in rules.iter().enumerate() {
+        let prefix_path = rule
+            .get("prefix_file")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let suffix_path = rule
+            .get("suffix_file")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+
+        let prefixes = load_pattern_file(prefix_path)?;
+        let suffixes = load_pattern_file(suffix_path)?;
+
+        if prefixes.is_empty() && suffixes.is_empty() {
+            bail!("rule {} must provide at least one non-empty prefix or suffix file", idx + 1);
+        }
+
+        for prefix in &prefixes {
+            validate_fragment("grouped prefix", prefix)?;
+        }
+        for suffix in &suffixes {
+            validate_fragment("grouped suffix", suffix)?;
+        }
+
+        all_prefixes.extend(prefixes.iter().cloned());
+        all_suffixes.extend(suffixes.iter().cloned());
+        grouped_rules.push(RuleGroup { prefixes, suffixes });
+    }
+
+    Ok(TargetFilters {
+        prefixes: normalize_fragments(all_prefixes),
+        suffixes: normalize_fragments(all_suffixes),
+        grouped_rules,
+    })
+}
+
+fn load_pattern_file(path_text: &str) -> Result<Vec<String>> {
+    if path_text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let path = PathBuf::from(path_text);
+    let content = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read pattern file {}", path.display()))?;
+
+    Ok(normalize_fragments(
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(ToOwned::to_owned)
+            .collect(),
+    ))
 }
 
 fn pattern_probability(patterns: &[String]) -> f64 {

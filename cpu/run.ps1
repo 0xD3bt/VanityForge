@@ -43,11 +43,18 @@ function Get-PatternList([string]$relativePath) {
     } | ForEach-Object { $_.Trim() }
 }
 
-$prefixes = Get-PatternList $config.patterns.prefix_file
-$suffixes = Get-PatternList $config.patterns.suffix_file
+$hasGroupedRules = $null -ne $config.rules -and @($config.rules).Count -gt 0
 
-if ($prefixes.Count -eq 0 -and $suffixes.Count -eq 0) {
-    throw "At least one prefix or suffix pattern is required"
+if ($hasGroupedRules) {
+    $prefixes = @()
+    $suffixes = @()
+} else {
+    $prefixes = Get-PatternList $config.patterns.prefix_file
+    $suffixes = Get-PatternList $config.patterns.suffix_file
+
+    if ($prefixes.Count -eq 0 -and $suffixes.Count -eq 0) {
+        throw "At least one prefix or suffix pattern is required"
+    }
 }
 
 $resultsPath = Join-Path $root $config.output.results_file
@@ -77,11 +84,15 @@ if (-not (Test-Path $binary)) {
 }
 
 $args = @()
-foreach ($prefix in $prefixes) {
-    $args += @("--prefix", $prefix)
-}
-foreach ($suffix in $suffixes) {
-    $args += @("--suffix", $suffix)
+if ($hasGroupedRules) {
+    $args += @("--grouped-rules-config", $configFile)
+} else {
+    foreach ($prefix in $prefixes) {
+        $args += @("--prefix", $prefix)
+    }
+    foreach ($suffix in $suffixes) {
+        $args += @("--suffix", $suffix)
+    }
 }
 
 if ($config.cpu.threads -gt 0) {

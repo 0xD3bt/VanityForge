@@ -12,6 +12,7 @@ param(
     [string]$Word = "",
     [string]$PrefixWord = "",
     [string]$SuffixWord = "",
+    [string]$GroupedSpecPath = "",
     [string]$OutputPath = "",
     [string]$PrefixOutputPath = "",
     [string]$SuffixOutputPath = "",
@@ -27,6 +28,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSCommandPath
+$gpuPrefixLimit = 256
+$gpuSuffixLimit = 128
+$gpuPatternCharLimit = 31
 $defaultConfigTemplate = Join-Path $repoRoot "vanity.config.json"
 $gpuBuildToolCandidates = @(
     "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\Common7\Tools\Launch-VsDevShell.ps1",
@@ -63,6 +67,7 @@ function Show-Usage {
     Write-Host "  vanity setup <prefixWord> <suffixWord>"
     Write-Host "  vanity word <fullWord>"
     Write-Host "  vanity generate [options]"
+    Write-Host "  vanity generate -GroupedSpecPath <path> -ConfigPath <path> -UpdateConfig"
     Write-Host "  vanity run [-Engine cpu|gpu]"
     Write-Host "  vanity build [-Engine cpu|gpu|all]"
     Write-Host "  vanity stop"
@@ -86,6 +91,7 @@ function Show-Usage {
     Write-Host "  vanity smoke"
     Write-Host "  vanity setup Star forge    # prefix=Star, suffix=forge"
     Write-Host "  vanity word Starforge      # one full word"
+    Write-Host "  vanity generate -GroupedSpecPath .local\configs\grouped-variant-smoke-spec.json -ConfigPath .local\configs\grouped-variant-smoke.config.json -UpdateConfig"
     Write-Host "  vanity run"
     Write-Host "  vanity stop"
     Write-Host ""
@@ -779,24 +785,24 @@ function New-InitPlan([string]$TargetConfigPath) {
     $gpuWarnings = [System.Collections.Generic.List[string]]::new()
     if ($selectedEngine -eq "gpu") {
         if ($mode -eq "word" -and $wordInfo) {
-            if ($wordInfo.VariantCount -gt 128) {
-                [void]$gpuWarnings.Add("Single-word mode produces more than 128 prefix variants.")
+            if ($wordInfo.VariantCount -gt $gpuPrefixLimit) {
+                [void]$gpuWarnings.Add("Single-word mode produces more than $gpuPrefixLimit prefix variants.")
             }
-            if ($wordInfo.Length -gt 15) {
-                [void]$gpuWarnings.Add("Single-word mode exceeds the GPU pattern length limit of 15 characters.")
+            if ($wordInfo.Length -gt $gpuPatternCharLimit) {
+                [void]$gpuWarnings.Add("Single-word mode exceeds the GPU pattern length limit of $gpuPatternCharLimit characters.")
             }
         } else {
-            if ($prefixInfo -and $prefixInfo.VariantCount -gt 128) {
-                [void]$gpuWarnings.Add("Prefix variants exceed the GPU limit of 128 entries.")
+            if ($prefixInfo -and $prefixInfo.VariantCount -gt $gpuPrefixLimit) {
+                [void]$gpuWarnings.Add("Prefix variants exceed the GPU limit of $gpuPrefixLimit entries.")
             }
-            if ($suffixInfo -and $suffixInfo.VariantCount -gt 32) {
-                [void]$gpuWarnings.Add("Suffix variants exceed the GPU limit of 32 entries.")
+            if ($suffixInfo -and $suffixInfo.VariantCount -gt $gpuSuffixLimit) {
+                [void]$gpuWarnings.Add("Suffix variants exceed the GPU limit of $gpuSuffixLimit entries.")
             }
-            if ($prefixInfo -and $prefixInfo.Length -gt 15) {
-                [void]$gpuWarnings.Add("Prefix word exceeds the GPU pattern length limit of 15 characters.")
+            if ($prefixInfo -and $prefixInfo.Length -gt $gpuPatternCharLimit) {
+                [void]$gpuWarnings.Add("Prefix word exceeds the GPU pattern length limit of $gpuPatternCharLimit characters.")
             }
-            if ($suffixInfo -and $suffixInfo.Length -gt 15) {
-                [void]$gpuWarnings.Add("Suffix word exceeds the GPU pattern length limit of 15 characters.")
+            if ($suffixInfo -and $suffixInfo.Length -gt $gpuPatternCharLimit) {
+                [void]$gpuWarnings.Add("Suffix word exceeds the GPU pattern length limit of $gpuPatternCharLimit characters.")
             }
         }
     }
@@ -992,6 +998,7 @@ switch ($Command.ToLowerInvariant()) {
             -Word $Word `
             -PrefixWord $PrefixWord `
             -SuffixWord $SuffixWord `
+            -GroupedSpecPath $GroupedSpecPath `
             -OutputPath $OutputPath `
             -PrefixOutputPath $PrefixOutputPath `
             -SuffixOutputPath $SuffixOutputPath `
