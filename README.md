@@ -32,9 +32,6 @@ GPU requirements:
 - Visual Studio Build Tools with C++
 - PowerShell on Windows
 
-<details>
-<summary>Windows setup guide for required tools</summary>
-
 If you already have the tools installed, skip this section.
 
 CPU-only setup:
@@ -71,7 +68,6 @@ vanity doctor
 ```
 
 If `vanity doctor` recommends CPU mode, you can still use the project without CUDA by staying on the CPU engine.
-</details>
 
 ## Install
 
