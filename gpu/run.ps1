@@ -13,8 +13,10 @@ if (-not (Test-Path $configFile)) {
 $config = Get-Content $configFile -Raw | ConvertFrom-Json
 $resultsPath = Join-Path $root $config.output.results_file
 $resultsDir = Split-Path -Parent $resultsPath
+$saveFilterEnabled = $null -ne $config.output.enable_save_filter -and [bool]$config.output.enable_save_filter
 $minMatchedPrefixLength = if ($null -ne $config.output.min_matched_prefix_length) { [int]$config.output.min_matched_prefix_length } else { 0 }
 $minMatchedSuffixLength = if ($null -ne $config.output.min_matched_suffix_length) { [int]$config.output.min_matched_suffix_length } else { 0 }
+$saveMatchMode = if ($null -ne $config.output.save_match_mode -and -not [string]::IsNullOrWhiteSpace([string]$config.output.save_match_mode)) { [string]$config.output.save_match_mode } else { "both" }
 
 function Get-PrivateKeyFormats($outputConfig) {
     $defaults = @("base58")
@@ -59,8 +61,9 @@ foreach ($format in $privateKeyFormats) {
     $args += @("--private-key-format", $format)
 }
 
-if ($minMatchedPrefixLength -gt 0 -or $minMatchedSuffixLength -gt 0) {
-    Write-Host ("Save filter   : prefix >= {0} and suffix >= {1}" -f $minMatchedPrefixLength, $minMatchedSuffixLength)
+if ($saveFilterEnabled -and ($minMatchedPrefixLength -gt 0 -or $minMatchedSuffixLength -gt 0)) {
+    $joiner = if ($saveMatchMode -eq "either") { "or" } else { "and" }
+    Write-Host ("Save filter   : prefix >= {0} {1} suffix >= {2}" -f $minMatchedPrefixLength, $joiner, $minMatchedSuffixLength)
 }
 
 & $binary @args 2>&1 | ForEach-Object {
@@ -68,9 +71,16 @@ if ($minMatchedPrefixLength -gt 0 -or $minMatchedSuffixLength -gt 0) {
     if ($line.StartsWith("JSONMATCH ")) {
         $json = $line.Substring(10)
         $match = $json | ConvertFrom-Json
-        $prefixLength = if ($null -ne $match.matched_prefix) { ([string]$match.matched_prefix).Length } else { 0 }
-        $suffixLength = if ($null -ne $match.matched_suffix) { ([string]$match.matched_suffix).Length } else { 0 }
-        if ($prefixLength -ge $minMatchedPrefixLength -and $suffixLength -ge $minMatchedSuffixLength) {
+        if ($saveFilterEnabled) {
+            $prefixLength = if ($null -ne $match.matched_prefix) { ([string]$match.matched_prefix).Length } else { 0 }
+            $suffixLength = if ($null -ne $match.matched_suffix) { ([string]$match.matched_suffix).Length } else { 0 }
+            $prefixOk = $prefixLength -ge $minMatchedPrefixLength
+            $suffixOk = $suffixLength -ge $minMatchedSuffixLength
+            $shouldSave = if ($saveMatchMode -eq "either") { $prefixOk -or $suffixOk } else { $prefixOk -and $suffixOk }
+        } else {
+            $shouldSave = $true
+        }
+        if ($shouldSave) {
             Add-Content -Path $resultsPath -Value $json -Encoding ascii
         }
     } else {

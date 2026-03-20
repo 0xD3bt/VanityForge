@@ -63,4 +63,5 @@ powershell -ExecutionPolicy Bypass -File .\cpu\run.ps1 -ConfigPath .local\config
 - `cpu.keep_running: false` stops on the first hit and writes companion output files based on `output.single_keypair_file`
 - `output.write_match_files: true` also writes one set of files per match in `output.matches_dir`
 - `output.private_key_formats` currently defaults to `["base58"]`, so result files should be treated as secret-bearing unless you switch to `["none"]`
-- `output.min_matched_prefix_length` and `output.min_matched_suffix_length` let you keep the broader search active while only saving stronger keep-running hits such as `5x5+`
+- `output.enable_save_filter` turns keep-running save filtering on or off
+- `output.min_matched_prefix_length`, `output.min_matched_suffix_length`, and `output.save_match_mode` let you keep the broader search active while only saving stronger keep-running hits such as `5x5+`

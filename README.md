@@ -381,8 +381,10 @@ Key settings:
 - `output.results_file`: append-only JSONL results file
 - `output.single_keypair_file`: base output path used by CPU one-hit mode
 - `output.private_key_formats`: which private-key representations to save
+- `output.enable_save_filter`: enable or disable keep-running save filtering
 - `output.min_matched_prefix_length`: only persist keep-running matches whose matched prefix is at least this long
 - `output.min_matched_suffix_length`: only persist keep-running matches whose matched suffix is at least this long
+- `output.save_match_mode`: combine save thresholds with `both` or `either`
 - `cpu.threads`: `0` means auto; any positive number pins the worker count
 - `cpu.max_attempts`: `0` means unlimited
 - `gpu.max_iterations`: `0` means unlimited
@@ -589,7 +591,7 @@ Progress timing note:
 
 - the live `avg .../match` field is an expected average time per match at the current rate, not a guaranteed countdown to the next hit
 - in GPU keep-running mode, match rows are appended to `output.results_file` and the terminal stays focused on iteration/progress updates
-- when save filters are configured, the runner prints `Save filter   : prefix >= X and suffix >= Y` before the live status stream starts
+- when `output.enable_save_filter` is `true`, the runner prints `Save filter   : prefix >= X and suffix >= Y` before the live status stream starts
 
 If you need larger pattern sets or longer entries, use the CPU engine.
 
@@ -682,7 +684,7 @@ Behavior:
 
 When `cpu.keep_running` is `true`, matches are appended to `output.results_file`.
 
-If `output.min_matched_prefix_length` or `output.min_matched_suffix_length` is set, keep-running mode only persists matches that meet both thresholds.
+If `output.enable_save_filter` is `true`, keep-running mode only persists matches that meet the configured threshold rule.
 
 `cpu.threads: 0` means auto-detect the worker count. `cpu.max_attempts: 0` means run without an attempt limit.
 

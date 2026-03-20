@@ -70,6 +70,10 @@ struct Cli {
     #[arg(long, default_value_t = 0)]
     min_matched_suffix_length: usize,
 
+    /// How keep-running save thresholds are combined: both or either.
+    #[arg(long, default_value = "both")]
+    save_match_mode: String,
+
     /// Output path for the Solana keypair JSON.
     #[arg(long, default_value = "vanity-keypair.json")]
     out: PathBuf,
@@ -137,8 +141,14 @@ fn main() -> Result<()> {
         }
         if cli.min_matched_prefix_length > 0 || cli.min_matched_suffix_length > 0 {
             println!(
-                "Save filter   : prefix >= {} and suffix >= {}",
-                cli.min_matched_prefix_length, cli.min_matched_suffix_length
+                "Save filter   : prefix >= {} {} suffix >= {}",
+                cli.min_matched_prefix_length,
+                if cli.save_match_mode == "either" {
+                    "or"
+                } else {
+                    "and"
+                },
+                cli.min_matched_suffix_length
             );
         }
     } else {
@@ -392,6 +402,10 @@ fn validate_inputs(cli: &Cli, filters: &TargetFilters) -> Result<()> {
 
     if cli.keep_running && cli.write_match_files && cli.matches_dir.as_os_str().is_empty() {
         bail!("--matches-dir must not be empty");
+    }
+
+    if cli.save_match_mode != "both" && cli.save_match_mode != "either" {
+        bail!("--save-match-mode must be either 'both' or 'either'");
     }
 
     parse_key_formats(&cli.private_key_format)?;
@@ -725,7 +739,13 @@ fn append_match_artifacts(
 fn should_persist_match(cli: &Cli, result: &MatchResult) -> bool {
     let prefix_len = result.matched_prefix.as_deref().map_or(0, str::len);
     let suffix_len = result.matched_suffix.as_deref().map_or(0, str::len);
-    prefix_len >= cli.min_matched_prefix_length && suffix_len >= cli.min_matched_suffix_length
+    let prefix_ok = prefix_len >= cli.min_matched_prefix_length;
+    let suffix_ok = suffix_len >= cli.min_matched_suffix_length;
+    if cli.save_match_mode == "either" {
+        prefix_ok || suffix_ok
+    } else {
+        prefix_ok && suffix_ok
+    }
 }
 
 #[derive(Debug, Default, Clone)]

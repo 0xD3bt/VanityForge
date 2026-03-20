@@ -61,8 +61,10 @@ $resultsPath = Join-Path $root $config.output.results_file
 $singleKeypairPath = Join-Path $root $config.output.single_keypair_file
 $matchesDir = Join-Path $root $config.output.matches_dir
 $privateKeyFormats = Get-PrivateKeyFormats $config.output
+$saveFilterEnabled = $null -ne $config.output.enable_save_filter -and [bool]$config.output.enable_save_filter
 $minMatchedPrefixLength = if ($null -ne $config.output.min_matched_prefix_length) { [int]$config.output.min_matched_prefix_length } else { 0 }
 $minMatchedSuffixLength = if ($null -ne $config.output.min_matched_suffix_length) { [int]$config.output.min_matched_suffix_length } else { 0 }
+$saveMatchMode = if ($null -ne $config.output.save_match_mode -and -not [string]::IsNullOrWhiteSpace([string]$config.output.save_match_mode)) { [string]$config.output.save_match_mode } else { "both" }
 
 $resultsDir = Split-Path -Parent $resultsPath
 if ($resultsDir) {
@@ -111,11 +113,14 @@ if ($config.cpu.max_attempts -gt 0) {
 
 if ($config.cpu.keep_running) {
     $args += @("--keep-running", "--results-file", $resultsPath)
-    if ($minMatchedPrefixLength -gt 0) {
-        $args += @("--min-matched-prefix-length", [string]$minMatchedPrefixLength)
-    }
-    if ($minMatchedSuffixLength -gt 0) {
-        $args += @("--min-matched-suffix-length", [string]$minMatchedSuffixLength)
+    if ($saveFilterEnabled) {
+        if ($minMatchedPrefixLength -gt 0) {
+            $args += @("--min-matched-prefix-length", [string]$minMatchedPrefixLength)
+        }
+        if ($minMatchedSuffixLength -gt 0) {
+            $args += @("--min-matched-suffix-length", [string]$minMatchedSuffixLength)
+        }
+        $args += @("--save-match-mode", $saveMatchMode)
     }
     if ($config.output.write_match_files) {
         $args += @("--write-match-files", "--matches-dir", $matchesDir)
