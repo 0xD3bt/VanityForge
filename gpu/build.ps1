@@ -115,6 +115,11 @@ if ($ConfigPath) {
     if ($config.gpu.cuda_arch) {
         $CudaArch = [string]$config.gpu.cuda_arch
     }
+    $extraSaveMinTotalMatchedChars = if ($null -ne $config.output.enable_save_filter -and [bool]$config.output.enable_save_filter -and $null -ne $config.output.min_total_matched_chars) {
+        [int]$config.output.min_total_matched_chars
+    } else {
+        0
+    }
 
     if ($null -ne $config.rules -and @($config.rules).Count -gt 0) {
         $groupIndex = 0
@@ -126,6 +131,7 @@ if ($ConfigPath) {
         Add-RuleEntries 0 $config.patterns.prefix_file $config.patterns.suffix_file
     }
 } else {
+    $extraSaveMinTotalMatchedChars = 0
     Add-RuleEntries 0 $PrefixFile $SuffixFile
 }
 
@@ -165,6 +171,7 @@ $header = @"
 
 constexpr int GPU_PREFIX_COUNT = $($prefixes.Count);
 constexpr int GPU_SUFFIX_COUNT = $($suffixes.Count);
+constexpr int GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS = $extraSaveMinTotalMatchedChars;
 
 __device__ __constant__ int GPU_PREFIX_LENGTHS[$prefixCount] = { $prefixLengths };
 __device__ __constant__ int GPU_SUFFIX_LENGTHS[$suffixCount] = { $suffixLengths };

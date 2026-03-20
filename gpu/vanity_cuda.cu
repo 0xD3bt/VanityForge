@@ -451,6 +451,52 @@ __device__ bool grouped_rule_matches(const char* key, int key_len, int* matched_
     return false;
 }
 
+__device__ bool extra_total_match(const char* key, int key_len, int* matched_prefix_index, int* matched_suffix_index) {
+    if (GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS <= 0) {
+        return false;
+    }
+
+    int best_prefix_index = -1;
+    int best_prefix_len = 0;
+    for (int prefix_index = 0; prefix_index < GPU_PREFIX_COUNT; ++prefix_index) {
+        if (!prefix_entry_matches(key, key_len, prefix_index)) {
+            continue;
+        }
+
+        const int len = GPU_PREFIX_LENGTHS[prefix_index];
+        if (len > best_prefix_len) {
+            best_prefix_len = len;
+            best_prefix_index = prefix_index;
+        }
+    }
+
+    int best_suffix_index = -1;
+    int best_suffix_len = 0;
+    for (int suffix_index = 0; suffix_index < GPU_SUFFIX_COUNT; ++suffix_index) {
+        if (!suffix_entry_matches(key, key_len, suffix_index)) {
+            continue;
+        }
+
+        const int len = GPU_SUFFIX_LENGTHS[suffix_index];
+        if (len > best_suffix_len) {
+            best_suffix_len = len;
+            best_suffix_index = suffix_index;
+        }
+    }
+
+    if (best_prefix_index < 0 && best_suffix_index < 0) {
+        return false;
+    }
+
+    if (best_prefix_len + best_suffix_len < GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS) {
+        return false;
+    }
+
+    *matched_prefix_index = best_prefix_index;
+    *matched_suffix_index = best_suffix_index;
+    return true;
+}
+
 __device__ void append_char(char*& out, char* end, char ch) {
     if (out + 1 < end) {
         *out++ = ch;
@@ -588,7 +634,8 @@ __global__ void vanity_scan(
         int prefix_index = -1;
         int suffix_index = -1;
 
-        if (grouped_rule_matches(address, key_len, &prefix_index, &suffix_index)) {
+        if (grouped_rule_matches(address, key_len, &prefix_index, &suffix_index)
+            || extra_total_match(address, key_len, &prefix_index, &suffix_index)) {
             atomicAdd(keys_found, 1);
 
             const bool need_keypair_bytes = emit_base58 || emit_solana_json;

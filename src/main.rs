@@ -62,21 +62,9 @@ struct Cli {
     #[arg(long, default_value = "matches")]
     matches_dir: PathBuf,
 
-    /// Only persist keep-running matches whose matched prefix is at least this long.
-    #[arg(long, default_value_t = 0)]
-    min_matched_prefix_length: usize,
-
-    /// Only persist keep-running matches whose matched suffix is at least this long.
-    #[arg(long, default_value_t = 0)]
-    min_matched_suffix_length: usize,
-
     /// Only persist keep-running matches whose matched prefix+suffix length is at least this total.
     #[arg(long, default_value_t = 0)]
     min_total_matched_chars: usize,
-
-    /// How keep-running save thresholds are combined: both or either.
-    #[arg(long, default_value = "both")]
-    save_match_mode: String,
 
     /// Output path for the Solana keypair JSON.
     #[arg(long, default_value = "vanity-keypair.json")]
@@ -143,21 +131,11 @@ fn main() -> Result<()> {
         if cli.write_match_files {
             println!("Matches dir   : {}", cli.matches_dir.display());
         }
+        println!("Listed targets: always saved");
         if cli.min_total_matched_chars > 0 {
             println!(
-                "Save filter   : total matched chars >= {}",
+                "Extra saves   : total matched chars >= {}",
                 cli.min_total_matched_chars
-            );
-        } else if cli.min_matched_prefix_length > 0 || cli.min_matched_suffix_length > 0 {
-            println!(
-                "Save filter   : prefix >= {} {} suffix >= {}",
-                cli.min_matched_prefix_length,
-                if cli.save_match_mode == "either" {
-                    "or"
-                } else {
-                    "and"
-                },
-                cli.min_matched_suffix_length
             );
         }
     } else {
@@ -196,6 +174,11 @@ fn main() -> Result<()> {
 
     for worker_id in 0..threads {
         let keep_running = cli.keep_running;
+        let extra_min_total = if keep_running {
+            cli.min_total_matched_chars
+        } else {
+            0
+        };
         let filters = filters.clone();
         let stop = Arc::clone(&stop);
         let attempts = Arc::clone(&attempts);
@@ -224,7 +207,9 @@ fn main() -> Result<()> {
                 let verifying_key = signing_key.verifying_key();
                 let address = bs58::encode(verifying_key.as_bytes()).into_string();
 
-                if let Some((matched_prefix, matched_suffix)) = match_address(&address, &filters) {
+                if let Some((matched_prefix, matched_suffix)) =
+                    match_address(&address, &filters, extra_min_total)
+                {
                     let mut keypair_bytes = Vec::with_capacity(64);
                     keypair_bytes.extend_from_slice(&secret);
                     keypair_bytes.extend_from_slice(verifying_key.as_bytes());
@@ -264,7 +249,7 @@ fn main() -> Result<()> {
             Ok(result) => {
                 let match_index = matches_found.fetch_add(1, Ordering::Relaxed) + 1;
                 if cli.keep_running {
-                    if should_persist_match(&cli, &result) {
+                    if should_persist_match(&cli, &filters, &result) {
                         append_match_artifacts(&cli, &result, match_index, &key_formats)?;
                         println!();
                         println!("Match #{match_index} found!");
@@ -413,10 +398,6 @@ fn validate_inputs(cli: &Cli, filters: &TargetFilters) -> Result<()> {
         bail!("--matches-dir must not be empty");
     }
 
-    if cli.save_match_mode != "both" && cli.save_match_mode != "either" {
-        bail!("--save-match-mode must be either 'both' or 'either'");
-    }
-
     parse_key_formats(&cli.private_key_format)?;
 
     Ok(())
@@ -434,7 +415,7 @@ fn validate_fragment(label: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-fn match_address(address: &str, filters: &TargetFilters) -> Option<(Option<String>, Option<String>)> {
+fn match_listed_address(address: &str, filters: &TargetFilters) -> Option<(Option<String>, Option<String>)> {
     if !filters.grouped_rules.is_empty() {
         for rule in &filters.grouped_rules {
             let matched_prefix = if rule.prefixes.is_empty() {
@@ -494,6 +475,49 @@ fn match_address(address: &str, filters: &TargetFilters) -> Option<(Option<Strin
     };
 
     Some((matched_prefix, matched_suffix))
+}
+
+fn longest_matching_prefix(address: &str, filters: &TargetFilters) -> Option<String> {
+    filters
+        .prefixes
+        .iter()
+        .filter(|prefix| address.starts_with(prefix.as_str()))
+        .max_by_key(|prefix| prefix.len())
+        .cloned()
+}
+
+fn longest_matching_suffix(address: &str, filters: &TargetFilters) -> Option<String> {
+    filters
+        .suffixes
+        .iter()
+        .filter(|suffix| address.ends_with(suffix.as_str()))
+        .max_by_key(|suffix| suffix.len())
+        .cloned()
+}
+
+fn match_address(
+    address: &str,
+    filters: &TargetFilters,
+    extra_min_total_chars: usize,
+) -> Option<(Option<String>, Option<String>)> {
+    if let Some(listed_match) = match_listed_address(address, filters) {
+        return Some(listed_match);
+    }
+
+    if extra_min_total_chars == 0 {
+        return None;
+    }
+
+    let matched_prefix = longest_matching_prefix(address, filters);
+    let matched_suffix = longest_matching_suffix(address, filters);
+    let total_len =
+        matched_prefix.as_deref().map_or(0, str::len) + matched_suffix.as_deref().map_or(0, str::len);
+
+    if total_len >= extra_min_total_chars && (matched_prefix.is_some() || matched_suffix.is_some()) {
+        Some((matched_prefix, matched_suffix))
+    } else {
+        None
+    }
 }
 
 fn normalize_fragments(fragments: Vec<String>) -> Vec<String> {
@@ -745,18 +769,34 @@ fn append_match_artifacts(
     Ok(())
 }
 
-fn should_persist_match(cli: &Cli, result: &MatchResult) -> bool {
+fn is_listed_match(filters: &TargetFilters, result: &MatchResult) -> bool {
+    let prefix = result.matched_prefix.as_deref().unwrap_or("");
+    let suffix = result.matched_suffix.as_deref().unwrap_or("");
+
+    if !filters.grouped_rules.is_empty() {
+        return filters.grouped_rules.iter().any(|rule| {
+            let prefix_matches = rule.prefixes.is_empty() || rule.prefixes.iter().any(|entry| entry == prefix);
+            let suffix_matches = rule.suffixes.is_empty() || rule.suffixes.iter().any(|entry| entry == suffix);
+            prefix_matches && suffix_matches
+        });
+    }
+
+    let prefix_matches = filters.prefixes.is_empty() || filters.prefixes.iter().any(|entry| entry == prefix);
+    let suffix_matches = filters.suffixes.is_empty() || filters.suffixes.iter().any(|entry| entry == suffix);
+    prefix_matches && suffix_matches
+}
+
+fn should_persist_match(cli: &Cli, filters: &TargetFilters, result: &MatchResult) -> bool {
+    if is_listed_match(filters, result) {
+        return true;
+    }
+
     let prefix_len = result.matched_prefix.as_deref().map_or(0, str::len);
     let suffix_len = result.matched_suffix.as_deref().map_or(0, str::len);
     if cli.min_total_matched_chars > 0 {
-        return prefix_len + suffix_len >= cli.min_total_matched_chars;
-    }
-    let prefix_ok = prefix_len >= cli.min_matched_prefix_length;
-    let suffix_ok = suffix_len >= cli.min_matched_suffix_length;
-    if cli.save_match_mode == "either" {
-        prefix_ok || suffix_ok
+        prefix_len + suffix_len >= cli.min_total_matched_chars
     } else {
-        prefix_ok && suffix_ok
+        true
     }
 }
 

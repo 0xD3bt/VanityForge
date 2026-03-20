@@ -14,10 +14,7 @@ $config = Get-Content $configFile -Raw | ConvertFrom-Json
 $resultsPath = Join-Path $root $config.output.results_file
 $resultsDir = Split-Path -Parent $resultsPath
 $saveFilterEnabled = $null -ne $config.output.enable_save_filter -and [bool]$config.output.enable_save_filter
-$minMatchedPrefixLength = if ($null -ne $config.output.min_matched_prefix_length) { [int]$config.output.min_matched_prefix_length } else { 0 }
-$minMatchedSuffixLength = if ($null -ne $config.output.min_matched_suffix_length) { [int]$config.output.min_matched_suffix_length } else { 0 }
 $minTotalMatchedChars = if ($null -ne $config.output.min_total_matched_chars) { [int]$config.output.min_total_matched_chars } else { 0 }
-$saveMatchMode = if ($null -ne $config.output.save_match_mode -and -not [string]::IsNullOrWhiteSpace([string]$config.output.save_match_mode)) { [string]$config.output.save_match_mode } else { "both" }
 
 function Get-PrivateKeyFormats($outputConfig) {
     $defaults = @("base58")
@@ -63,11 +60,9 @@ foreach ($format in $privateKeyFormats) {
 }
 
 if ($saveFilterEnabled) {
+    Write-Host "Listed targets: always saved"
     if ($minTotalMatchedChars -gt 0) {
-        Write-Host ("Save filter   : total matched chars >= {0}" -f $minTotalMatchedChars)
-    } elseif ($minMatchedPrefixLength -gt 0 -or $minMatchedSuffixLength -gt 0) {
-        $joiner = if ($saveMatchMode -eq "either") { "or" } else { "and" }
-        Write-Host ("Save filter   : prefix >= {0} {1} suffix >= {2}" -f $minMatchedPrefixLength, $joiner, $minMatchedSuffixLength)
+        Write-Host ("Extra saves   : total matched chars >= {0}" -f $minTotalMatchedChars)
     }
 }
 
@@ -75,23 +70,7 @@ if ($saveFilterEnabled) {
     $line = "$_"
     if ($line.StartsWith("JSONMATCH ")) {
         $json = $line.Substring(10)
-        $match = $json | ConvertFrom-Json
-        if ($saveFilterEnabled) {
-            $prefixLength = if ($null -ne $match.matched_prefix) { ([string]$match.matched_prefix).Length } else { 0 }
-            $suffixLength = if ($null -ne $match.matched_suffix) { ([string]$match.matched_suffix).Length } else { 0 }
-            if ($minTotalMatchedChars -gt 0) {
-                $shouldSave = ($prefixLength + $suffixLength) -ge $minTotalMatchedChars
-            } else {
-                $prefixOk = $prefixLength -ge $minMatchedPrefixLength
-                $suffixOk = $suffixLength -ge $minMatchedSuffixLength
-                $shouldSave = if ($saveMatchMode -eq "either") { $prefixOk -or $suffixOk } else { $prefixOk -and $suffixOk }
-            }
-        } else {
-            $shouldSave = $true
-        }
-        if ($shouldSave) {
-            Add-Content -Path $resultsPath -Value $json -Encoding ascii
-        }
+        Add-Content -Path $resultsPath -Value $json -Encoding ascii
     } else {
         Write-Host $line
     }
