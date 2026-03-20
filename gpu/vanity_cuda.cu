@@ -279,11 +279,48 @@ double pattern_probability(const std::vector<std::string>& patterns) {
     return probability;
 }
 
+double total_threshold_probability(
+    const std::vector<std::string>& prefixes,
+    const std::vector<std::string>& suffixes,
+    int min_total_chars
+) {
+    if (min_total_chars <= 0) {
+        return 0.0;
+    }
+
+    auto effective_prefixes = minimize_prefix_patterns(prefixes);
+    auto effective_suffixes = minimize_suffix_patterns(suffixes);
+    double probability = 0.0;
+
+    for (const auto& prefix : effective_prefixes) {
+        const double prefix_probability = std::pow(58.0, -static_cast<int>(prefix.size()));
+        for (const auto& suffix : effective_suffixes) {
+            if (static_cast<int>(prefix.size() + suffix.size()) < min_total_chars) {
+                continue;
+            }
+
+            probability += prefix_probability * std::pow(58.0, -static_cast<int>(suffix.size()));
+        }
+    }
+
+    return probability;
+}
+
 PatternStats estimate_pattern_stats() {
     PatternStats stats;
 
     auto prefix_patterns = load_prefix_patterns();
     auto suffix_patterns = load_suffix_patterns();
+    std::vector<std::string> all_prefixes;
+    std::vector<std::string> all_suffixes;
+    all_prefixes.reserve(prefix_patterns.size());
+    all_suffixes.reserve(suffix_patterns.size());
+    for (const auto& pattern : prefix_patterns) {
+        all_prefixes.push_back(pattern.value);
+    }
+    for (const auto& pattern : suffix_patterns) {
+        all_suffixes.push_back(pattern.value);
+    }
 
     std::vector<int> groups;
     groups.reserve(prefix_patterns.size() + suffix_patterns.size());
@@ -298,6 +335,8 @@ PatternStats estimate_pattern_stats() {
         }
     }
 
+    double listed_probability = 0.0;
+    double listed_overlap_with_extra_probability = 0.0;
     for (int group : groups) {
         std::vector<std::string> group_prefixes;
         std::vector<std::string> group_suffixes;
@@ -320,7 +359,25 @@ PatternStats estimate_pattern_stats() {
         stats.effective_suffixes += static_cast<int>(effective_suffixes.size());
         stats.prefix_probability += pattern_probability(effective_prefixes);
         stats.suffix_probability += pattern_probability(effective_suffixes);
-        stats.combined_probability += pattern_probability(effective_prefixes) * pattern_probability(effective_suffixes);
+        const double group_probability =
+            pattern_probability(effective_prefixes) * pattern_probability(effective_suffixes);
+        listed_probability += group_probability;
+        listed_overlap_with_extra_probability += total_threshold_probability(
+            group_prefixes,
+            group_suffixes,
+            GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS
+        );
+    }
+
+    const double extra_probability = total_threshold_probability(
+        all_prefixes,
+        all_suffixes,
+        GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS
+    );
+    stats.combined_probability =
+        listed_probability + extra_probability - listed_overlap_with_extra_probability;
+    if (stats.combined_probability < 0.0) {
+        stats.combined_probability = 0.0;
     }
 
     if (stats.combined_probability > 0.0) {

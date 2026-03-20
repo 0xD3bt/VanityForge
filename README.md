@@ -1,4 +1,4 @@
-VanityForge logo
+![VanityForge logo](assets/vanityforge-logo.png)
 
 # VanityForge
 
