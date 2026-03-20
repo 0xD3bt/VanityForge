@@ -492,6 +492,68 @@ vanity generate -PrefixWord "Nova" -SuffixWord "core" -UpdateConfig -ConfigPath 
 vanity generate -GroupedSpecPath ".local/configs/grouped-variant-smoke-spec.json" -ConfigPath ".local/configs/my-grouped-search.config.json" -UpdateConfig
 ```
 
+### Grouped rules
+
+Use grouped rules when you want multiple allowed `prefix...suffix` families in one run without cross-matching between them.
+
+Example grouped spec:
+
+```json
+{
+  "engine": "gpu",
+  "rules": [
+    {
+      "name": "alpha-to-beta",
+      "prefix_word": "Alpha",
+      "suffix_word": "Beta"
+    },
+    {
+      "name": "north-to-curated-suffixes",
+      "prefix_word": "North",
+      "suffix_file": ".local/patterns/suffixes/debt-grouped.txt"
+    },
+    {
+      "name": "curated-prefixes-to-south",
+      "prefix_file": ".local/patterns/prefixes/project-grouped.txt",
+      "suffix_word": "South"
+    }
+  ]
+}
+```
+
+What this means:
+
+- rule 1 matches `Alpha...Beta`
+- rule 2 matches `North...<any suffix from the referenced file>`
+- rule 3 matches `<any prefix from the referenced file>...South`
+- prefixes and suffixes only pair inside the same rule
+- cross-combinations are not allowed
+
+For example, if one rule is `Alpha...Beta` and another is `Gamma...Delta`, the grouped matcher allows `Alpha...Beta` and `Gamma...Delta`, but it will not accept `Alpha...Delta`.
+
+Running grouped generation:
+
+```powershell
+vanity generate -GroupedSpecPath ".local/configs/my-grouped-spec.json" -ConfigPath ".local/configs/my-grouped-search.config.json" -UpdateConfig
+```
+
+That writes per-rule pattern files and a grouped runtime config with a `rules` array like:
+
+```json
+{
+  "rules": [
+    {
+      "prefix_file": ".local/patterns/prefixes/grouped-01-alpha-to-beta-prefix.txt",
+      "suffix_file": ".local/patterns/suffixes/grouped-01-alpha-to-beta-suffix.txt"
+    },
+    {
+      "prefix_file": ".local/patterns/prefixes/grouped-02-north-to-curated-suffixes-prefix.txt",
+      "suffix_file": ".local/patterns/suffixes/debt-grouped.txt"
+    }
+  ]
+}
+```
+
 Notes:
 
 - only Base58-valid characters are emitted
@@ -501,6 +563,7 @@ Notes:
 - use `-Quiet` when you only want the summary, warnings, and output paths
 - `-UpdateConfig` writes generated files and updates `patterns.prefix_file` and `patterns.suffix_file`
 - `-GroupedSpecPath` generates multiple isolated prefix/suffix rule pairs and writes a grouped `rules` config
+- grouped specs support `prefix_word`, `suffix_word`, `prefix_file`, and `suffix_file`
 - `-Run` starts a bounded smoke test only and refuses unbounded configs
 - use `.\run.ps1` for full searches
 - in single-word mode, `-UpdateConfig` sets the prefix file and creates an intentionally empty suffix file
@@ -513,6 +576,12 @@ GPU-specific pattern limits:
 - maximum pattern length `31` characters per entry
 
 In grouped mode, those GPU limits apply to the flattened total across all rule entries, not per rule.
+
+Example:
+
+- rule 1 with `20` prefixes and `8` suffixes
+- rule 2 with `8` prefixes and `16` suffixes
+- flattened GPU totals become `28` prefixes and `24` suffixes
 
 If you need larger pattern sets or longer entries, use the CPU engine.
 

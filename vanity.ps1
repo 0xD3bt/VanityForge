@@ -79,7 +79,7 @@ function Show-Usage {
     Write-Host "  smoke     Run a bounded smoke test using a temporary config."
     Write-Host "  setup     Quick split-word setup: prefix word + suffix word."
     Write-Host "  word      Quick single-word setup: one full target word."
-    Write-Host "  generate  Advanced variant generation and config update helper."
+    Write-Host "  generate  Advanced variant generation, including grouped rule specs."
     Write-Host "  run       Start the configured search."
     Write-Host "  build     Build the configured engine."
     Write-Host "  stop      Stop project search processes."
