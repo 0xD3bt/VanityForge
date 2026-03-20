@@ -1,4 +1,4 @@
-![VanityForge logo](assets/vanityforge-logo.png)
+VanityForge logo
 
 # VanityForge
 
@@ -51,8 +51,8 @@ GPU setup on Windows:
 3. Install [Build Tools for Visual Studio](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022).
 4. In the Visual Studio installer, install the C++ build tools workload.
 5. In the installer details, make sure these components are selected:
-   - `MSVC v143 - VS 2022 C++ x64/x86 build tools`
-   - `Windows 11 SDK`
+  - `MSVC v143 - VS 2022 C++ x64/x86 build tools`
+  - `Windows 11 SDK`
 6. Open a new PowerShell window after installation.
 7. Verify the toolchain:
 
@@ -93,6 +93,34 @@ Result files can contain private keys.
 - Keep `private/` and any exported key files private
 - `runs/` can contain private key material when `output.private_key_formats` includes export formats such as `base58`
 
+## Choose your path
+
+Use CPU when:
+
+- you want the simplest setup
+- you want broad compatibility
+- you do not have a ready NVIDIA CUDA environment
+
+Use GPU when:
+
+- you have an NVIDIA GPU
+- you have CUDA Toolkit and Visual Studio Build Tools installed
+- you want much higher throughput for harder vanity addresses
+
+Recommended CPU path:
+
+- run `vanity doctor`
+- run `vanity init`
+- keep `engine` set to `cpu`
+- run `vanity smoke`, then `vanity run`
+
+Recommended GPU path:
+
+- run `vanity doctor`
+- run `vanity init`
+- confirm `gpu.cuda_arch` for your card during setup
+- run `vanity smoke`, then `vanity run`
+
 ## Quick start
 
 Simplest setup path:
@@ -103,31 +131,31 @@ Simplest setup path:
 .\install.ps1
 ```
 
-2. Check your machine and get an engine recommendation:
+1. Check your machine and get an engine recommendation:
 
 ```powershell
 vanity doctor
 ```
 
-3. Run the setup wizard:
+1. Run the setup wizard:
 
 ```powershell
 vanity init
 ```
 
-4. Run a bounded smoke test:
+1. Run a bounded smoke test:
 
 ```powershell
 vanity smoke
 ```
 
-5. Run the search:
+1. Run the search:
 
 ```powershell
 vanity run
 ```
 
-6. Stop a running search if needed:
+1. Stop a running search if needed:
 
 ```powershell
 vanity stop
@@ -141,25 +169,25 @@ Repo-local fallback without installing:
 .\vanity.ps1 doctor
 ```
 
-2. Run the setup wizard:
+1. Run the setup wizard:
 
 ```powershell
 .\vanity.ps1 init
 ```
 
-3. Run a bounded smoke test:
+1. Run a bounded smoke test:
 
 ```powershell
 .\vanity.ps1 smoke
 ```
 
-4. Run the search:
+1. Run the search:
 
 ```powershell
 .\vanity.ps1 run
 ```
 
-5. Stop a running search if needed:
+1. Stop a running search if needed:
 
 ```powershell
 .\vanity.ps1 stop
@@ -361,7 +389,7 @@ Key settings:
 
 Default output layout:
 
-- `runs/`: JSONL run output and other run artifacts; treat as secret-bearing when private-key export is enabled
+- `runs/`: JSONL run output and other run artifacts; treat as secret-bearing with the current `base58` default unless you switch `output.private_key_formats` to `["none"]`
 - `private/`: secret-bearing keypair files and per-match secret exports
 
 Config value conventions:
@@ -505,11 +533,16 @@ Quick GPU example:
 "engine": "gpu"
 ```
 
+Before running, confirm `gpu.cuda_arch` for your NVIDIA card. The easiest path is:
+
+```powershell
+vanity doctor
+vanity init
+```
+
 ```powershell
 vanity run
 ```
-
-For GPU users, also set `gpu.cuda_arch` for your card before running.
 
 What the top-level scripts do:
 
@@ -597,7 +630,7 @@ Behavior:
 
 `gpu.max_iterations: 0` means unlimited kernel launches. `gpu.max_matches: 0` means keep collecting matches until you stop the run.
 
-Current default target:
+Shipped example target:
 
 - `sm_89`, which matches an RTX 4090
 
@@ -617,8 +650,8 @@ Users usually find it in 3 steps:
 nvidia-smi -L
 ```
 
-2. Look up that GPU on NVIDIA's CUDA GPU / compute capability list
-3. Convert compute capability to the `sm_XX` format used by `vanity.config.json`
+1. Look up that GPU on NVIDIA's CUDA GPU / compute capability list
+2. Convert compute capability to the `sm_XX` format used by `vanity.config.json`
 
 Examples:
 
