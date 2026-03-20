@@ -2,7 +2,7 @@
 
 # VanityForge
 
-`VanityForge` is a config-driven Solana vanity address generator with both CPU and GPU engines. It supports Rust-based multithreaded CPU search and CUDA-accelerated NVIDIA GPU search, with shared pattern files, shared config, and JSONL output for collecting matches locally.
+`VanityForge` is a config-driven Solana vanity address generator with both CPU and GPU engines. GPU acceleration is for NVIDIA CUDA GPUs only. It supports Rust-based multithreaded CPU search and CUDA-accelerated NVIDIA GPU search, with shared pattern files, shared config, and JSONL output for collecting matches locally.
 
 Users can switch between CPU and GPU in `vanity.config.json`, edit `patterns/prefixes/*.txt` and `patterns/suffixes/*.txt`, and run the same top-level PowerShell entrypoint. The public project name is `VanityForge`; the internal package and binary names currently remain `solana-vanity` and `solana-vanity-gpu` for compatibility.
 
