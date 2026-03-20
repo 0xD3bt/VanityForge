@@ -64,6 +64,7 @@ $privateKeyFormats = Get-PrivateKeyFormats $config.output
 $saveFilterEnabled = $null -ne $config.output.enable_save_filter -and [bool]$config.output.enable_save_filter
 $minMatchedPrefixLength = if ($null -ne $config.output.min_matched_prefix_length) { [int]$config.output.min_matched_prefix_length } else { 0 }
 $minMatchedSuffixLength = if ($null -ne $config.output.min_matched_suffix_length) { [int]$config.output.min_matched_suffix_length } else { 0 }
+$minTotalMatchedChars = if ($null -ne $config.output.min_total_matched_chars) { [int]$config.output.min_total_matched_chars } else { 0 }
 $saveMatchMode = if ($null -ne $config.output.save_match_mode -and -not [string]::IsNullOrWhiteSpace([string]$config.output.save_match_mode)) { [string]$config.output.save_match_mode } else { "both" }
 
 $resultsDir = Split-Path -Parent $resultsPath
@@ -114,6 +115,9 @@ if ($config.cpu.max_attempts -gt 0) {
 if ($config.cpu.keep_running) {
     $args += @("--keep-running", "--results-file", $resultsPath)
     if ($saveFilterEnabled) {
+        if ($minTotalMatchedChars -gt 0) {
+            $args += @("--min-total-matched-chars", [string]$minTotalMatchedChars)
+        }
         if ($minMatchedPrefixLength -gt 0) {
             $args += @("--min-matched-prefix-length", [string]$minMatchedPrefixLength)
         }

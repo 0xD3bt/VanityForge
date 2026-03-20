@@ -70,6 +70,10 @@ struct Cli {
     #[arg(long, default_value_t = 0)]
     min_matched_suffix_length: usize,
 
+    /// Only persist keep-running matches whose matched prefix+suffix length is at least this total.
+    #[arg(long, default_value_t = 0)]
+    min_total_matched_chars: usize,
+
     /// How keep-running save thresholds are combined: both or either.
     #[arg(long, default_value = "both")]
     save_match_mode: String,
@@ -139,7 +143,12 @@ fn main() -> Result<()> {
         if cli.write_match_files {
             println!("Matches dir   : {}", cli.matches_dir.display());
         }
-        if cli.min_matched_prefix_length > 0 || cli.min_matched_suffix_length > 0 {
+        if cli.min_total_matched_chars > 0 {
+            println!(
+                "Save filter   : total matched chars >= {}",
+                cli.min_total_matched_chars
+            );
+        } else if cli.min_matched_prefix_length > 0 || cli.min_matched_suffix_length > 0 {
             println!(
                 "Save filter   : prefix >= {} {} suffix >= {}",
                 cli.min_matched_prefix_length,
@@ -739,6 +748,9 @@ fn append_match_artifacts(
 fn should_persist_match(cli: &Cli, result: &MatchResult) -> bool {
     let prefix_len = result.matched_prefix.as_deref().map_or(0, str::len);
     let suffix_len = result.matched_suffix.as_deref().map_or(0, str::len);
+    if cli.min_total_matched_chars > 0 {
+        return prefix_len + suffix_len >= cli.min_total_matched_chars;
+    }
     let prefix_ok = prefix_len >= cli.min_matched_prefix_length;
     let suffix_ok = suffix_len >= cli.min_matched_suffix_length;
     if cli.save_match_mode == "either" {

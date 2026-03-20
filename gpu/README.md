@@ -64,6 +64,7 @@ powershell -ExecutionPolicy Bypass -File .\gpu\run.ps1 -ConfigPath .local\config
 - GPU pattern limits are `256` prefixes, `128` suffixes, and `31` characters per entry
 - `output.private_key_formats` currently defaults to `["base58"]`, so GPU JSONL output should be treated as secret-bearing unless you switch to `["none"]`
 - `output.enable_save_filter` turns keep-running save filtering on or off
-- `output.min_matched_prefix_length`, `output.min_matched_suffix_length`, and `output.save_match_mode` let you keep a broader grouped search active while only saving stronger matches such as `5x5+`
-- when the save filter is enabled, `gpu/run.ps1` prints `Save filter   : prefix >= X and suffix >= Y` before the iteration updates begin
+- `output.min_total_matched_chars` is the cleanest way to keep a broader grouped search active while only saving stronger matches such as `5x5`, `6x4`, and `7x3`
+- `output.min_matched_prefix_length`, `output.min_matched_suffix_length`, and `output.save_match_mode` remain available when you want side-specific save rules instead
+- when the save filter is enabled, `gpu/run.ps1` prints either `Save filter   : total matched chars >= X` or `Save filter   : prefix >= X and suffix >= Y` before the iteration updates begin
 - the scanner is derived from Apache-licensed CUDA Solana `ed25519` code from `vendor-solanity`
