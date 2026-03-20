@@ -13,6 +13,8 @@ if (-not (Test-Path $configFile)) {
 $config = Get-Content $configFile -Raw | ConvertFrom-Json
 $resultsPath = Join-Path $root $config.output.results_file
 $resultsDir = Split-Path -Parent $resultsPath
+$minMatchedPrefixLength = if ($null -ne $config.output.min_matched_prefix_length) { [int]$config.output.min_matched_prefix_length } else { 0 }
+$minMatchedSuffixLength = if ($null -ne $config.output.min_matched_suffix_length) { [int]$config.output.min_matched_suffix_length } else { 0 }
 
 function Get-PrivateKeyFormats($outputConfig) {
     $defaults = @("base58")
@@ -57,11 +59,20 @@ foreach ($format in $privateKeyFormats) {
     $args += @("--private-key-format", $format)
 }
 
+if ($minMatchedPrefixLength -gt 0 -or $minMatchedSuffixLength -gt 0) {
+    Write-Host ("Save filter   : prefix >= {0} and suffix >= {1}" -f $minMatchedPrefixLength, $minMatchedSuffixLength)
+}
+
 & $binary @args 2>&1 | ForEach-Object {
     $line = "$_"
     if ($line.StartsWith("JSONMATCH ")) {
         $json = $line.Substring(10)
-        Add-Content -Path $resultsPath -Value $json -Encoding ascii
+        $match = $json | ConvertFrom-Json
+        $prefixLength = if ($null -ne $match.matched_prefix) { ([string]$match.matched_prefix).Length } else { 0 }
+        $suffixLength = if ($null -ne $match.matched_suffix) { ([string]$match.matched_suffix).Length } else { 0 }
+        if ($prefixLength -ge $minMatchedPrefixLength -and $suffixLength -ge $minMatchedSuffixLength) {
+            Add-Content -Path $resultsPath -Value $json -Encoding ascii
+        }
     } else {
         Write-Host $line
     }

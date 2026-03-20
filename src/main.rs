@@ -62,6 +62,14 @@ struct Cli {
     #[arg(long, default_value = "matches")]
     matches_dir: PathBuf,
 
+    /// Only persist keep-running matches whose matched prefix is at least this long.
+    #[arg(long, default_value_t = 0)]
+    min_matched_prefix_length: usize,
+
+    /// Only persist keep-running matches whose matched suffix is at least this long.
+    #[arg(long, default_value_t = 0)]
+    min_matched_suffix_length: usize,
+
     /// Output path for the Solana keypair JSON.
     #[arg(long, default_value = "vanity-keypair.json")]
     out: PathBuf,
@@ -126,6 +134,12 @@ fn main() -> Result<()> {
         );
         if cli.write_match_files {
             println!("Matches dir   : {}", cli.matches_dir.display());
+        }
+        if cli.min_matched_prefix_length > 0 || cli.min_matched_suffix_length > 0 {
+            println!(
+                "Save filter   : prefix >= {} and suffix >= {}",
+                cli.min_matched_prefix_length, cli.min_matched_suffix_length
+            );
         }
     } else {
         println!("Output        : {}", cli.out.display());
@@ -231,23 +245,25 @@ fn main() -> Result<()> {
             Ok(result) => {
                 let match_index = matches_found.fetch_add(1, Ordering::Relaxed) + 1;
                 if cli.keep_running {
-                    append_match_artifacts(&cli, &result, match_index, &key_formats)?;
-                    println!();
-                    println!("Match #{match_index} found!");
-                    println!("Address       : {}", result.address);
-                    println!(
-                        "Matched prefix: {}",
-                        result.matched_prefix.as_deref().unwrap_or("<none>")
-                    );
-                    println!(
-                        "Matched suffix: {}",
-                        result.matched_suffix.as_deref().unwrap_or("<none>")
-                    );
-                    println!("Attempts      : {}", human_int(result.attempts));
-                    println!(
-                        "Elapsed       : {}",
-                        format_duration_human(result.elapsed.as_secs_f64())
-                    );
+                    if should_persist_match(&cli, &result) {
+                        append_match_artifacts(&cli, &result, match_index, &key_formats)?;
+                        println!();
+                        println!("Match #{match_index} found!");
+                        println!("Address       : {}", result.address);
+                        println!(
+                            "Matched prefix: {}",
+                            result.matched_prefix.as_deref().unwrap_or("<none>")
+                        );
+                        println!(
+                            "Matched suffix: {}",
+                            result.matched_suffix.as_deref().unwrap_or("<none>")
+                        );
+                        println!("Attempts      : {}", human_int(result.attempts));
+                        println!(
+                            "Elapsed       : {}",
+                            format_duration_human(result.elapsed.as_secs_f64())
+                        );
+                    }
                 } else {
                     first_match = Some(result);
                     break;
@@ -704,6 +720,12 @@ fn append_match_artifacts(
     writeln!(file, "{line}")
         .with_context(|| format!("failed to append {}", cli.results_file.display()))?;
     Ok(())
+}
+
+fn should_persist_match(cli: &Cli, result: &MatchResult) -> bool {
+    let prefix_len = result.matched_prefix.as_deref().map_or(0, str::len);
+    let suffix_len = result.matched_suffix.as_deref().map_or(0, str::len);
+    prefix_len >= cli.min_matched_prefix_length && suffix_len >= cli.min_matched_suffix_length
 }
 
 #[derive(Debug, Default, Clone)]
