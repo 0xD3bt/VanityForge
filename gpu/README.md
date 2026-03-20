@@ -2,43 +2,65 @@
 
 This folder contains the CUDA-based engine and helper scripts for NVIDIA GPUs.
 
+Run commands from the repository root unless noted otherwise.
+
 ## Main files
 
-- `build.ps1`: builds the GPU binary using the shared repo config
-- `run.ps1`: runs the GPU engine using the shared repo config
+- `build.ps1`: builds the GPU binary using shared repo config inputs
+- `run.ps1`: builds and runs the GPU engine using the shared repo config
 - `vanity_cuda.cu`: CUDA scanner source
 
 ## How it is configured
 
-The GPU engine no longer uses hardcoded local pattern files in this folder.
-Instead, it reads shared repo config from:
+The GPU engine uses the shared repo config and pattern files:
 
 - `vanity.config.json`
 - `patterns/prefixes/*.txt`
 - `patterns/suffixes/*.txt`
 
-## Typical usage
+For local-only configs that should stay out of git, prefer `.local/configs/`.
 
-Build only:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\build.ps1 -Engine gpu
-```
-
-Run using the config-selected pattern files:
+Before running, confirm `gpu.cuda_arch` for your NVIDIA card. The easiest path is:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\run.ps1
+vanity doctor
+vanity init
 ```
 
-Direct GPU run:
+## Recommended usage
+
+Build and run the GPU engine explicitly:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\gpu\run.ps1
+vanity build -Engine gpu
+vanity run -Engine gpu
 ```
 
-## Notes
+Or run whatever engine is currently selected in the config:
 
-- The build script forces the Visual Studio x64 toolchain for CUDA on Windows.
-- `cuda_arch` comes from `vanity.config.json`, so users can change GPU targets without editing the CUDA source.
-- The scanner is derived from Apache-licensed CUDA Solana `ed25519` code from `vendor-solanity`.
+```powershell
+vanity run
+```
+
+## Direct scripts
+
+Build only with explicit inputs:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\gpu\build.ps1 -PrefixFile patterns\prefixes\example.txt -SuffixFile patterns\suffixes\example.txt -CudaArch sm_89
+```
+
+Run with a specific config:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\gpu\run.ps1 -ConfigPath .local\configs\my-vanity.config.json
+```
+
+## Behavior notes
+
+- the build script forces the Visual Studio x64 toolchain for CUDA on Windows
+- `gpu.max_iterations: 0` means unlimited kernel launches
+- `gpu.max_matches: 0` means unlimited matches
+- GPU pattern limits are `128` prefixes, `32` suffixes, and `15` characters per entry
+- `output.private_key_formats` currently defaults to `["base58"]`, so GPU JSONL output should be treated as secret-bearing unless you switch to `["none"]`
+- the scanner is derived from Apache-licensed CUDA Solana `ed25519` code from `vendor-solanity`
