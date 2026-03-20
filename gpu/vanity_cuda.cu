@@ -1,12 +1,17 @@
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cinttypes>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <random>
+#include <string>
+#include <vector>
 
 #include "../vendor-solanity/src/cuda-headers/gpu_common.h"
 #include "../vendor-solanity/src/cuda-ecc-ed25519/ed25519.h"
@@ -41,6 +46,15 @@ struct Options {
     bool emit_seed_hex = false;
     bool private_key_formats_explicit = false;
     bool verbose = false;
+};
+
+struct PatternStats {
+    int effective_prefixes = 0;
+    int effective_suffixes = 0;
+    double prefix_probability = 1.0;
+    double suffix_probability = 1.0;
+    double combined_probability = 1.0;
+    double average_attempts = 1.0;
 };
 
 void print_usage() {
@@ -144,6 +158,178 @@ const char* timestamp() {
     std::tm local{};
     localtime_s(&local, &now);
     std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &local);
+    return buffer;
+}
+
+bool starts_with(const std::string& value, const std::string& prefix) {
+    return value.size() >= prefix.size() && value.compare(0, prefix.size(), prefix) == 0;
+}
+
+bool ends_with(const std::string& value, const std::string& suffix) {
+    return value.size() >= suffix.size()
+        && value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+std::vector<std::string> minimize_prefix_patterns(const std::vector<std::string>& patterns) {
+    auto sorted = patterns;
+    std::stable_sort(sorted.begin(), sorted.end(), [](const std::string& left, const std::string& right) {
+        return left.size() < right.size();
+    });
+
+    std::vector<std::string> minimized;
+    minimized.reserve(sorted.size());
+
+    for (const auto& pattern : sorted) {
+        bool covered = false;
+        for (const auto& existing : minimized) {
+            if (starts_with(pattern, existing)) {
+                covered = true;
+                break;
+            }
+        }
+        if (!covered) {
+            minimized.push_back(pattern);
+        }
+    }
+
+    return minimized;
+}
+
+std::vector<std::string> minimize_suffix_patterns(const std::vector<std::string>& patterns) {
+    auto sorted = patterns;
+    std::stable_sort(sorted.begin(), sorted.end(), [](const std::string& left, const std::string& right) {
+        return left.size() < right.size();
+    });
+
+    std::vector<std::string> minimized;
+    minimized.reserve(sorted.size());
+
+    for (const auto& pattern : sorted) {
+        bool covered = false;
+        for (const auto& existing : minimized) {
+            if (ends_with(pattern, existing)) {
+                covered = true;
+                break;
+            }
+        }
+        if (!covered) {
+            minimized.push_back(pattern);
+        }
+    }
+
+    return minimized;
+}
+
+std::vector<std::string> load_prefix_patterns() {
+    if (GPU_PREFIX_COUNT == 0) {
+        return {};
+    }
+
+    int host_lengths[GPU_PREFIX_COUNT] = {};
+    char host_patterns[GPU_PREFIX_COUNT][16] = {};
+    CUDA_CHK(cudaMemcpyFromSymbol(host_lengths, GPU_PREFIX_LENGTHS, sizeof(host_lengths)));
+    CUDA_CHK(cudaMemcpyFromSymbol(host_patterns, GPU_PREFIXES, sizeof(host_patterns)));
+
+    std::vector<std::string> patterns;
+    patterns.reserve(GPU_PREFIX_COUNT);
+    for (int i = 0; i < GPU_PREFIX_COUNT; ++i) {
+        patterns.emplace_back(host_patterns[i], host_lengths[i]);
+    }
+
+    return patterns;
+}
+
+std::vector<std::string> load_suffix_patterns() {
+    if (GPU_SUFFIX_COUNT == 0) {
+        return {};
+    }
+
+    int host_lengths[GPU_SUFFIX_COUNT] = {};
+    char host_patterns[GPU_SUFFIX_COUNT][16] = {};
+    CUDA_CHK(cudaMemcpyFromSymbol(host_lengths, GPU_SUFFIX_LENGTHS, sizeof(host_lengths)));
+    CUDA_CHK(cudaMemcpyFromSymbol(host_patterns, GPU_SUFFIXES, sizeof(host_patterns)));
+
+    std::vector<std::string> patterns;
+    patterns.reserve(GPU_SUFFIX_COUNT);
+    for (int i = 0; i < GPU_SUFFIX_COUNT; ++i) {
+        patterns.emplace_back(host_patterns[i], host_lengths[i]);
+    }
+
+    return patterns;
+}
+
+double pattern_probability(const std::vector<std::string>& patterns) {
+    if (patterns.empty()) {
+        return 1.0;
+    }
+
+    double probability = 0.0;
+    for (const auto& pattern : patterns) {
+        probability += std::pow(58.0, -static_cast<int>(pattern.size()));
+    }
+    return probability;
+}
+
+PatternStats estimate_pattern_stats() {
+    PatternStats stats;
+
+    auto prefix_patterns = load_prefix_patterns();
+    auto suffix_patterns = load_suffix_patterns();
+    auto effective_prefixes = minimize_prefix_patterns(prefix_patterns);
+    auto effective_suffixes = minimize_suffix_patterns(suffix_patterns);
+
+    stats.effective_prefixes = static_cast<int>(effective_prefixes.size());
+    stats.effective_suffixes = static_cast<int>(effective_suffixes.size());
+    stats.prefix_probability = pattern_probability(effective_prefixes);
+    stats.suffix_probability = pattern_probability(effective_suffixes);
+    stats.combined_probability = stats.prefix_probability * stats.suffix_probability;
+    if (stats.combined_probability > 0.0) {
+        stats.average_attempts = 1.0 / stats.combined_probability;
+    } else {
+        stats.average_attempts = std::numeric_limits<double>::infinity();
+    }
+
+    return stats;
+}
+
+std::string format_rate(double cps) {
+    char buffer[64];
+    if (cps >= 1'000'000'000.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.2f Gaddr/s", cps / 1'000'000'000.0);
+    } else if (cps >= 1'000'000.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.2f Maddr/s", cps / 1'000'000.0);
+    } else if (cps >= 1'000.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.2f Kaddr/s", cps / 1'000.0);
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%.0f addr/s", cps);
+    }
+    return buffer;
+}
+
+std::string format_duration_brief(double seconds) {
+    if (!std::isfinite(seconds)) {
+        return "unknown";
+    }
+    if (seconds < 1.0) {
+        return "<1s";
+    }
+    if (seconds < 60.0) {
+        char buffer[32];
+        std::snprintf(buffer, sizeof(buffer), "%.0fs", seconds);
+        return buffer;
+    }
+    if (seconds < 3600.0) {
+        char buffer[32];
+        std::snprintf(buffer, sizeof(buffer), "%.1fm", seconds / 60.0);
+        return buffer;
+    }
+    if (seconds < 86400.0) {
+        char buffer[32];
+        std::snprintf(buffer, sizeof(buffer), "%.1fh", seconds / 3600.0);
+        return buffer;
+    }
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.1fd", seconds / 86400.0);
     return buffer;
 }
 
@@ -461,9 +647,12 @@ int main(int argc, char** argv) {
     CUDA_CHK(cudaPeekAtLastError());
     CUDA_CHK(cudaDeviceSynchronize());
 
+    const PatternStats pattern_stats = estimate_pattern_stats();
+
     unsigned long long total_attempts = 0;
     unsigned long long total_matches = 0;
     unsigned long long iteration = 0;
+    const auto run_started = std::chrono::high_resolution_clock::now();
 
     while (true) {
         ++iteration;
@@ -492,17 +681,22 @@ int main(int argc, char** argv) {
         total_matches += static_cast<unsigned long long>(matches_this_iteration);
 
         const std::chrono::duration<double> elapsed = finished - started;
+        const std::chrono::duration<double> total_elapsed = finished - run_started;
         const double cps = attempts_this_iteration / elapsed.count();
+        const double total_cps = total_attempts / total_elapsed.count();
+        const double eta_seconds = pattern_stats.average_attempts / total_cps;
 
         std::printf(
-            "%s Iteration %llu Attempts: %llu in %.3f sec at %.3f MH/s - Total Attempts %llu - Matches %llu\n",
+            "%s Iteration %llu Attempts: %llu in %.3f sec at %s (%.3f MH/s) - Total Attempts %llu - Matches %llu - ETA ~ %s/match\n",
             timestamp(),
             iteration,
             attempts_this_iteration,
             elapsed.count(),
+            format_rate(cps).c_str(),
             cps / 1000000.0,
             total_attempts,
-            total_matches
+            total_matches,
+            format_duration_brief(eta_seconds).c_str()
         );
         std::fflush(stdout);
 
