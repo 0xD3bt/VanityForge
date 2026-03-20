@@ -583,6 +583,11 @@ Example:
 - rule 2 with `8` prefixes and `16` suffixes
 - flattened GPU totals become `28` prefixes and `24` suffixes
 
+Progress timing note:
+
+- the live `avg .../match` field is an expected average time per match at the current rate, not a guaranteed countdown to the next hit
+- in GPU keep-running mode, match rows are appended to `output.results_file` and the terminal stays focused on iteration/progress updates
+
 If you need larger pattern sets or longer entries, use the CPU engine.
 
 ## Running

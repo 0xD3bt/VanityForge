@@ -51,10 +51,10 @@ struct Options {
 struct PatternStats {
     int effective_prefixes = 0;
     int effective_suffixes = 0;
-    double prefix_probability = 1.0;
-    double suffix_probability = 1.0;
-    double combined_probability = 1.0;
-    double average_attempts = 1.0;
+    double prefix_probability = 0.0;
+    double suffix_probability = 0.0;
+    double combined_probability = 0.0;
+    double average_attempts = std::numeric_limits<double>::infinity();
 };
 
 struct HostPattern {
@@ -346,6 +346,23 @@ std::string format_rate(double cps) {
     return buffer;
 }
 
+std::string format_count(unsigned long long value) {
+    char buffer[64];
+    const double as_double = static_cast<double>(value);
+    if (as_double >= 1'000'000'000'000.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.2fT", as_double / 1'000'000'000'000.0);
+    } else if (as_double >= 1'000'000'000.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.2fB", as_double / 1'000'000'000.0);
+    } else if (as_double >= 1'000'000.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.2fM", as_double / 1'000'000.0);
+    } else if (as_double >= 1'000.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.2fK", as_double / 1'000.0);
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%llu", value);
+    }
+    return buffer;
+}
+
 std::string format_duration_brief(double seconds) {
     if (!std::isfinite(seconds)) {
         return "unknown";
@@ -373,58 +390,60 @@ std::string format_duration_brief(double seconds) {
     return buffer;
 }
 
-__device__ bool prefix_matches(const char* key, int key_len, int* matched_index) {
-    if (GPU_PREFIX_COUNT == 0) {
-        *matched_index = -1;
-        return true;
+__device__ bool prefix_entry_matches(const char* key, int key_len, int prefix_index) {
+    const int len = GPU_PREFIX_LENGTHS[prefix_index];
+    if (len > key_len) {
+        return false;
     }
 
-    for (int i = 0; i < GPU_PREFIX_COUNT; ++i) {
-        const int len = GPU_PREFIX_LENGTHS[i];
-        if (len > key_len) {
-            continue;
-        }
-
-        bool matched = true;
-        for (int j = 0; j < len; ++j) {
-            if (GPU_PREFIXES[i][j] != key[j]) {
-                matched = false;
-                break;
-            }
-        }
-
-        if (matched) {
-            *matched_index = i;
-            return true;
+    for (int j = 0; j < len; ++j) {
+        if (GPU_PREFIXES[prefix_index][j] != key[j]) {
+            return false;
         }
     }
 
-    return false;
+    return true;
 }
 
-__device__ bool suffix_matches(const char* key, int key_len, int* matched_index) {
-    if (GPU_SUFFIX_COUNT == 0) {
-        *matched_index = -1;
+__device__ bool suffix_entry_matches(const char* key, int key_len, int suffix_index) {
+    const int len = GPU_SUFFIX_LENGTHS[suffix_index];
+    if (len > key_len) {
+        return false;
+    }
+
+    const int start = key_len - len;
+    for (int j = 0; j < len; ++j) {
+        if (GPU_SUFFIXES[suffix_index][j] != key[start + j]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+__device__ bool grouped_rule_matches(const char* key, int key_len, int* matched_prefix_index, int* matched_suffix_index) {
+    if (GPU_PREFIX_COUNT == 0 && GPU_SUFFIX_COUNT == 0) {
+        *matched_prefix_index = -1;
+        *matched_suffix_index = -1;
         return true;
     }
 
-    for (int i = 0; i < GPU_SUFFIX_COUNT; ++i) {
-        const int len = GPU_SUFFIX_LENGTHS[i];
-        if (len > key_len) {
+    for (int prefix_index = 0; prefix_index < GPU_PREFIX_COUNT; ++prefix_index) {
+        if (!prefix_entry_matches(key, key_len, prefix_index)) {
             continue;
         }
 
-        const int start = key_len - len;
-        bool matched = true;
-        for (int j = 0; j < len; ++j) {
-            if (GPU_SUFFIXES[i][j] != key[start + j]) {
-                matched = false;
-                break;
+        const int group = GPU_PREFIX_GROUPS[prefix_index];
+        for (int suffix_index = 0; suffix_index < GPU_SUFFIX_COUNT; ++suffix_index) {
+            if (GPU_SUFFIX_GROUPS[suffix_index] != group) {
+                continue;
             }
-        }
+            if (!suffix_entry_matches(key, key_len, suffix_index)) {
+                continue;
+            }
 
-        if (matched) {
-            *matched_index = i;
+            *matched_prefix_index = prefix_index;
+            *matched_suffix_index = suffix_index;
             return true;
         }
     }
@@ -569,9 +588,7 @@ __global__ void vanity_scan(
         int prefix_index = -1;
         int suffix_index = -1;
 
-        if (prefix_matches(address, key_len, &prefix_index)
-            && suffix_matches(address, key_len, &suffix_index)
-            && GPU_PREFIX_GROUPS[prefix_index] == GPU_SUFFIX_GROUPS[suffix_index]) {
+        if (grouped_rule_matches(address, key_len, &prefix_index, &suffix_index)) {
             atomicAdd(keys_found, 1);
 
             const bool need_keypair_bytes = emit_base58 || emit_solana_json;
@@ -725,19 +742,18 @@ int main(int argc, char** argv) {
         const std::chrono::duration<double> total_elapsed = finished - run_started;
         const double cps = attempts_this_iteration / elapsed.count();
         const double total_cps = total_attempts / total_elapsed.count();
-        const double eta_seconds = pattern_stats.average_attempts / total_cps;
+        const double avg_seconds = pattern_stats.average_attempts / total_cps;
 
         std::printf(
-            "%s Iteration %llu Attempts: %llu in %.3f sec at %s (%.3f MH/s) - Total Attempts %llu - Matches %llu - ETA ~ %s/match\n",
+            "%s iter %llu | batch %s in %.1fs | %s | total %s | matches %llu | avg %s/match\n",
             timestamp(),
             iteration,
-            attempts_this_iteration,
+            format_count(attempts_this_iteration).c_str(),
             elapsed.count(),
             format_rate(cps).c_str(),
-            cps / 1000000.0,
-            total_attempts,
+            format_count(total_attempts).c_str(),
             total_matches,
-            format_duration_brief(eta_seconds).c_str()
+            format_duration_brief(avg_seconds).c_str()
         );
         std::fflush(stdout);
 

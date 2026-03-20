@@ -258,15 +258,15 @@ fn main() -> Result<()> {
                 let elapsed = start.elapsed();
                 let rate = total as f64 / elapsed.as_secs_f64().max(0.001);
                 let found = matches_found.load(Ordering::Relaxed);
-                let eta_seconds = average_attempts_estimate / rate.max(1.0);
+                let avg_seconds = average_attempts_estimate / rate.max(1.0);
 
                 println!(
-                    "Progress      : Tried {} in {} at {} ({} matches) - ETA ~ {}/match",
-                    human_int(total),
-                    format_duration_human(elapsed.as_secs_f64()),
+                    "Progress      : total {} | elapsed {} | {} | matches {} | avg {}/match",
+                    format_count_human(total),
+                    format_duration_brief(elapsed.as_secs_f64()),
                     format_rate_human(rate),
                     human_int(found as u64),
-                    format_duration_brief(eta_seconds)
+                    format_duration_brief(avg_seconds)
                 );
 
                 if let Some(limit) = cli.max_attempts {
@@ -1012,6 +1012,23 @@ fn human_int(value: u64) -> String {
     }
 
     out
+}
+
+fn format_count_human(value: u64) -> String {
+    let value = value as f64;
+    if value >= 1_000_000_000_000.0 {
+        return format!("{:.2}T", value / 1_000_000_000_000.0);
+    }
+    if value >= 1_000_000_000.0 {
+        return format!("{:.2}B", value / 1_000_000_000.0);
+    }
+    if value >= 1_000_000.0 {
+        return format!("{:.2}M", value / 1_000_000.0);
+    }
+    if value >= 1_000.0 {
+        return format!("{:.2}K", value / 1_000.0);
+    }
+    format!("{}", value as u64)
 }
 
 fn human_large_number(value: f64) -> String {

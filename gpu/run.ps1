@@ -62,7 +62,6 @@ foreach ($format in $privateKeyFormats) {
     if ($line.StartsWith("JSONMATCH ")) {
         $json = $line.Substring(10)
         Add-Content -Path $resultsPath -Value $json -Encoding ascii
-        Write-Host $json
     } else {
         Write-Host $line
     }
