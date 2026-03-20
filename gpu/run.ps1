@@ -15,7 +15,7 @@ $resultsPath = Join-Path $root $config.output.results_file
 $resultsDir = Split-Path -Parent $resultsPath
 
 function Get-PrivateKeyFormats($outputConfig) {
-    $defaults = @("none")
+    $defaults = @("base58")
     $formats = @()
 
     if ($null -ne $outputConfig.private_key_formats) {

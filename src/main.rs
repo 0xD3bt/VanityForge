@@ -707,7 +707,7 @@ fn seed_hex(keypair_bytes: &[u8]) -> String {
 }
 
 fn parse_key_formats(values: &[String]) -> Result<KeyFormatSelection> {
-    let defaults = vec!["none".to_string()];
+    let defaults = vec!["base58".to_string()];
     let values = if values.is_empty() { &defaults } else { values };
 
     let mut selection = KeyFormatSelection {

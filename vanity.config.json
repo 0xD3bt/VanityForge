@@ -7,7 +7,7 @@
   "output": {
     "results_file": "runs/matches.jsonl",
     "single_keypair_file": "private/vanity-keypair.json",
-    "private_key_formats": ["none"],
+    "private_key_formats": ["base58"],
     "write_match_files": false,
     "matches_dir": "private/matches"
   },

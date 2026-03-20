@@ -91,7 +91,7 @@ Result files can contain private keys.
 - Do not commit result files
 - Do not send private keys to anyone
 - Keep `private/` and any exported key files private
-- `runs/` stays non-secret by default only when `output.private_key_formats` is `["none"]`
+- `runs/` can contain private key material when `output.private_key_formats` includes export formats such as `base58`
 
 ## Quick start
 
@@ -166,6 +166,8 @@ Repo-local fallback without installing:
 ```
 
 If you want to work manually instead, you can still edit `vanity.config.json` and the pattern files yourself.
+
+For personal experiments, test configs, or machine-specific setups you do not want to commit, prefer keeping them under `.local/`, for example `.local/configs/my-vanity.config.json` and `.local/patterns/`.
 
 ## Commands
 
@@ -308,6 +310,8 @@ Main config file:
 
 - `vanity.config.json`
 
+For local-only configs that should stay out of git, prefer a path under `.local/configs/`.
+
 Example:
 
 ```json
@@ -320,7 +324,7 @@ Example:
   "output": {
     "results_file": "runs/matches.jsonl",
     "single_keypair_file": "private/vanity-keypair.json",
-    "private_key_formats": ["none"],
+    "private_key_formats": ["base58"],
     "write_match_files": false,
     "matches_dir": "private/matches"
   },
@@ -349,12 +353,23 @@ Key settings:
 - `output.results_file`: append-only JSONL results file
 - `output.single_keypair_file`: base output path used by CPU one-hit mode
 - `output.private_key_formats`: which private-key representations to save
+- `cpu.threads`: `0` means auto; any positive number pins the worker count
+- `cpu.max_attempts`: `0` means unlimited
+- `gpu.max_iterations`: `0` means unlimited
+- `gpu.max_matches`: `0` means unlimited
 - `gpu.cuda_arch`: CUDA arch like `sm_89` for an RTX 4090
 
 Default output layout:
 
-- `runs/`: JSONL run output and non-secret run artifacts
+- `runs/`: JSONL run output and other run artifacts; treat as secret-bearing when private-key export is enabled
 - `private/`: secret-bearing keypair files and per-match secret exports
+
+Config value conventions:
+
+- `cpu.threads: 0` means auto-detect and use available CPU threads
+- `cpu.max_attempts: 0` means unlimited attempts
+- `gpu.max_iterations: 0` means unlimited kernel launches
+- `gpu.max_matches: 0` means unlimited matches
 
 ### Private key formats
 
@@ -367,10 +382,10 @@ Supported values in `output.private_key_formats`:
 - `seed-hex`
 - `all`
 
-Recommended default:
+Current default:
 
 ```json
-"private_key_formats": ["none"]
+"private_key_formats": ["base58"]
 ```
 
 Save every supported format:
@@ -550,6 +565,8 @@ Behavior:
 
 When `cpu.keep_running` is `true`, matches are appended to `output.results_file`.
 
+`cpu.threads: 0` means auto-detect the worker count. `cpu.max_attempts: 0` means run without an attempt limit.
+
 When `cpu.keep_running` is `false`, the single winning keypair is written to:
 
 - `output.single_keypair_file` if `solana-json` is selected
@@ -577,6 +594,8 @@ Behavior:
 - appends match rows to `output.results_file`
 - only emits private-key fields when `output.private_key_formats` is not `["none"]`
 - supports JSONL match output, not CPU-style one-hit companion files
+
+`gpu.max_iterations: 0` means unlimited kernel launches. `gpu.max_matches: 0` means keep collecting matches until you stop the run.
 
 Current default target:
 
@@ -640,7 +659,7 @@ The JSONL output file contains one JSON object per line. Typical fields:
 - `seed_hex` if `seed-hex` is enabled
 - file path fields for CPU file outputs when applicable
 
-With the default `["none"]` setting, those private-key fields are omitted from JSONL output.
+With the default `["base58"]` setting, JSONL output includes the Base58 private key field.
 
 ## Base58 rules
 
@@ -704,9 +723,8 @@ Antivirus flags the GPU binary:
 
 Private keys are missing from results:
 
-- This is the secure default
-- `output.private_key_formats` defaults to `["none"]`
-- Secret-bearing outputs are only written when you explicitly enable them
+- This usually means private key export was disabled in your config
+- Set `output.private_key_formats` to include `base58`, `solana-json`, `seed-base58`, `seed-hex`, or `all`
 
 ## Notes
 

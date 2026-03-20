@@ -607,6 +607,28 @@ function Read-PositiveInt([string]$Prompt, [int]$DefaultValue, [int]$MinimumValu
     }
 }
 
+function Read-CudaArch([string]$Prompt, [string]$DefaultValue) {
+    while ($true) {
+        if ([string]::IsNullOrWhiteSpace($DefaultValue)) {
+            $answer = Read-Host "$Prompt (examples: sm_89, sm_86, sm_75)"
+        } else {
+            $answer = Read-DefaultedText "$Prompt (examples: sm_89, sm_86, sm_75)" $DefaultValue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($answer)) {
+            Write-Host "Enter a CUDA architecture like sm_89."
+            continue
+        }
+
+        $trimmed = $answer.Trim()
+        if ($trimmed -match "^sm_\d+$") {
+            return $trimmed
+        }
+
+        Write-Host "Enter a CUDA architecture in the form sm_XX, for example sm_89."
+    }
+}
+
 function Invoke-Generator {
     param(
         [string]$TargetWord,
@@ -683,17 +705,22 @@ function New-InitPlan([string]$TargetConfigPath) {
     $defaultEngine = if ($report.RecommendedEngine) { $report.RecommendedEngine } else { $existingConfig.engine }
     $selectedEngine = Read-Choice "Choose engine" @("cpu", "gpu") $defaultEngine
 
-    $defaultCudaArch = if ($report.GpuArchSuggestion) {
-        $report.GpuArchSuggestion.Value
-    } elseif ($existingConfig.gpu.cuda_arch) {
-        $existingConfig.gpu.cuda_arch
-    } else {
-        "sm_89"
-    }
-
     $selectedCudaArch = $null
     if ($selectedEngine -eq "gpu") {
-        $selectedCudaArch = Read-DefaultedText "CUDA architecture" $defaultCudaArch
+        $defaultCudaArch = if ($report.GpuArchSuggestion) {
+            $report.GpuArchSuggestion.Value
+        } elseif ($report.ConfigExists -and $existingConfig.gpu.cuda_arch) {
+            $existingConfig.gpu.cuda_arch
+        } else {
+            ""
+        }
+
+        if ([string]::IsNullOrWhiteSpace($defaultCudaArch)) {
+            Write-Host "CUDA architecture could not be inferred automatically."
+            Write-Host "Enter it manually so GPU setup does not assume the template value."
+        }
+
+        $selectedCudaArch = Read-CudaArch "CUDA architecture" $defaultCudaArch
     }
 
     $defaultMode = if ($selectedEngine -eq "gpu") { "split" } else { "word" }

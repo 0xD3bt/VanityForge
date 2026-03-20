@@ -13,7 +13,7 @@ if (-not (Test-Path $configFile)) {
 $config = Get-Content $configFile -Raw | ConvertFrom-Json
 
 function Get-PrivateKeyFormats($outputConfig) {
-    $defaults = @("none")
+    $defaults = @("base58")
     $formats = @()
 
     if ($null -ne $outputConfig.private_key_formats) {
