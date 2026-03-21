@@ -35,6 +35,7 @@ constexpr int MAX_ADDRESS_LEN = 64;
 constexpr int MAX_KEYPAIR_B58_LEN = 128;
 constexpr int MAX_SEED_B58_LEN = 64;
 constexpr int MAX_JSON_LINE_LEN = 2048;
+constexpr int AESTHETIC_MIN_SIDE_LEN = 5;
 
 struct Options {
     unsigned long long attempts_per_execution = 100000;
@@ -279,48 +280,11 @@ double pattern_probability(const std::vector<std::string>& patterns) {
     return probability;
 }
 
-double total_threshold_probability(
-    const std::vector<std::string>& prefixes,
-    const std::vector<std::string>& suffixes,
-    int min_total_chars
-) {
-    if (min_total_chars <= 0) {
-        return 0.0;
-    }
-
-    auto effective_prefixes = minimize_prefix_patterns(prefixes);
-    auto effective_suffixes = minimize_suffix_patterns(suffixes);
-    double probability = 0.0;
-
-    for (const auto& prefix : effective_prefixes) {
-        const double prefix_probability = std::pow(58.0, -static_cast<int>(prefix.size()));
-        for (const auto& suffix : effective_suffixes) {
-            if (static_cast<int>(prefix.size() + suffix.size()) < min_total_chars) {
-                continue;
-            }
-
-            probability += prefix_probability * std::pow(58.0, -static_cast<int>(suffix.size()));
-        }
-    }
-
-    return probability;
-}
-
 PatternStats estimate_pattern_stats() {
     PatternStats stats;
 
     auto prefix_patterns = load_prefix_patterns();
     auto suffix_patterns = load_suffix_patterns();
-    std::vector<std::string> all_prefixes;
-    std::vector<std::string> all_suffixes;
-    all_prefixes.reserve(prefix_patterns.size());
-    all_suffixes.reserve(suffix_patterns.size());
-    for (const auto& pattern : prefix_patterns) {
-        all_prefixes.push_back(pattern.value);
-    }
-    for (const auto& pattern : suffix_patterns) {
-        all_suffixes.push_back(pattern.value);
-    }
 
     std::vector<int> groups;
     groups.reserve(prefix_patterns.size() + suffix_patterns.size());
@@ -335,8 +299,6 @@ PatternStats estimate_pattern_stats() {
         }
     }
 
-    double listed_probability = 0.0;
-    double listed_overlap_with_extra_probability = 0.0;
     for (int group : groups) {
         std::vector<std::string> group_prefixes;
         std::vector<std::string> group_suffixes;
@@ -359,25 +321,8 @@ PatternStats estimate_pattern_stats() {
         stats.effective_suffixes += static_cast<int>(effective_suffixes.size());
         stats.prefix_probability += pattern_probability(effective_prefixes);
         stats.suffix_probability += pattern_probability(effective_suffixes);
-        const double group_probability =
+        stats.combined_probability +=
             pattern_probability(effective_prefixes) * pattern_probability(effective_suffixes);
-        listed_probability += group_probability;
-        listed_overlap_with_extra_probability += total_threshold_probability(
-            group_prefixes,
-            group_suffixes,
-            GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS
-        );
-    }
-
-    const double extra_probability = total_threshold_probability(
-        all_prefixes,
-        all_suffixes,
-        GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS
-    );
-    stats.combined_probability =
-        listed_probability + extra_probability - listed_overlap_with_extra_probability;
-    if (stats.combined_probability < 0.0) {
-        stats.combined_probability = 0.0;
     }
 
     if (stats.combined_probability > 0.0) {
@@ -478,6 +423,305 @@ __device__ bool suffix_entry_matches(const char* key, int key_len, int suffix_in
     return true;
 }
 
+__device__ unsigned char normalize_aesthetic_char(unsigned char ch) {
+    if (ch >= 'A' && ch <= 'Z') {
+        return static_cast<unsigned char>(ch + ('a' - 'A'));
+    }
+    return ch;
+}
+
+__device__ bool is_ascii_alpha(unsigned char ch) {
+    const unsigned char normalized = normalize_aesthetic_char(ch);
+    return normalized >= 'a' && normalized <= 'z';
+}
+
+__device__ int repeated_run_len(const char* key, int key_len) {
+    if (key_len <= 0) {
+        return 0;
+    }
+
+    const unsigned char first = normalize_aesthetic_char(static_cast<unsigned char>(key[0]));
+    int len = 0;
+    while (len < key_len
+        && normalize_aesthetic_char(static_cast<unsigned char>(key[len])) == first) {
+        ++len;
+    }
+    return len;
+}
+
+__device__ int alternating_digit_run_len(const char* key, int key_len) {
+    if (key_len < 2) {
+        return 0;
+    }
+
+    if (key[0] < '1' || key[0] > '9' || key[1] < '1' || key[1] > '9') {
+        return 0;
+    }
+
+    const unsigned char first = static_cast<unsigned char>(key[0]);
+    const unsigned char second = static_cast<unsigned char>(key[1]);
+    if (first == second) {
+        return 0;
+    }
+
+    int len = 2;
+    while (len < key_len) {
+        const unsigned char expected = (len % 2 == 0) ? first : second;
+        if (normalize_aesthetic_char(static_cast<unsigned char>(key[len])) != expected) {
+            break;
+        }
+        ++len;
+    }
+    return len;
+}
+
+__device__ int arithmetic_digit_run_len(const char* key, int key_len) {
+    if (key_len <= 0 || key[0] < '1' || key[0] > '9') {
+        return 0;
+    }
+
+    int best = 1;
+    const int steps[4] = { 1, -1, 2, -2 };
+    for (int step : steps) {
+        int len = 1;
+        while (len < key_len
+            && key[len] >= '1'
+            && key[len] <= '9'
+            && static_cast<int>(key[len] - '0') == static_cast<int>(key[len - 1] - '0') + step) {
+            ++len;
+        }
+        if (len > best) {
+            best = len;
+        }
+    }
+
+    return best;
+}
+
+__device__ int sequential_alpha_run_len(const char* key, int key_len) {
+    if (key_len <= 0 || !is_ascii_alpha(static_cast<unsigned char>(key[0]))) {
+        return 0;
+    }
+
+    int asc = 1;
+    while (asc < key_len
+        && is_ascii_alpha(static_cast<unsigned char>(key[asc]))
+        && normalize_aesthetic_char(static_cast<unsigned char>(key[asc]))
+            == normalize_aesthetic_char(static_cast<unsigned char>(key[asc - 1])) + 1) {
+        ++asc;
+    }
+
+    int desc = 1;
+    while (desc < key_len
+        && is_ascii_alpha(static_cast<unsigned char>(key[desc]))
+        && normalize_aesthetic_char(static_cast<unsigned char>(key[desc]))
+            == normalize_aesthetic_char(static_cast<unsigned char>(key[desc - 1])) - 1) {
+        ++desc;
+    }
+
+    return asc > desc ? asc : desc;
+}
+
+__device__ int alternating_alpha_run_len(const char* key, int key_len) {
+    if (key_len < 2) {
+        return 0;
+    }
+
+    if (!is_ascii_alpha(static_cast<unsigned char>(key[0]))
+        || !is_ascii_alpha(static_cast<unsigned char>(key[1]))) {
+        return 0;
+    }
+
+    const unsigned char first = normalize_aesthetic_char(static_cast<unsigned char>(key[0]));
+    const unsigned char second = normalize_aesthetic_char(static_cast<unsigned char>(key[1]));
+    if (first == second) {
+        return 0;
+    }
+
+    int len = 2;
+    while (len < key_len) {
+        const unsigned char expected = (len % 2 == 0) ? first : second;
+        if (!is_ascii_alpha(static_cast<unsigned char>(key[len]))
+            || normalize_aesthetic_char(static_cast<unsigned char>(key[len])) != expected) {
+            break;
+        }
+        ++len;
+    }
+
+    return len;
+}
+
+__device__ int repeated_chunk_run_len(const char* key, int key_len) {
+    if (key_len < 4) {
+        return 0;
+    }
+
+    int best = 0;
+    for (int chunk_len = 2; chunk_len <= key_len / 2; ++chunk_len) {
+        int len = chunk_len;
+        while (len < key_len) {
+            const unsigned char expected =
+                normalize_aesthetic_char(static_cast<unsigned char>(key[len % chunk_len]));
+            if (normalize_aesthetic_char(static_cast<unsigned char>(key[len])) != expected) {
+                break;
+            }
+            ++len;
+        }
+
+        if (len >= chunk_len * 2 && len > best) {
+            best = len;
+        }
+    }
+
+    return best;
+}
+
+__device__ bool edge_slices_match_exact(const char* key, int key_len, int prefix_len, int suffix_len) {
+    if (prefix_len <= 0 || prefix_len != suffix_len || key_len < prefix_len + suffix_len) {
+        return false;
+    }
+
+    for (int i = 0; i < prefix_len; ++i) {
+        if (key[i] != key[key_len - suffix_len + i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+__device__ bool edge_slices_match_word_case_insensitive(const char* key, int key_len, const char* word) {
+    int word_len = 0;
+    while (word[word_len] != '\0') {
+        ++word_len;
+    }
+
+    if (key_len < word_len * 2) {
+        return false;
+    }
+
+    for (int i = 0; i < word_len; ++i) {
+        if (normalize_aesthetic_char(static_cast<unsigned char>(key[i])) != static_cast<unsigned char>(word[i])) {
+            return false;
+        }
+        if (normalize_aesthetic_char(static_cast<unsigned char>(key[key_len - word_len + i])) != static_cast<unsigned char>(word[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+__device__ int mirrored_curated_word_len(const char* key, int key_len, int min_total_chars) {
+    if (14 >= min_total_chars && edge_slices_match_word_case_insensitive(key, key_len, "pumpfun")) {
+        return 7;
+    }
+
+    if (12 >= min_total_chars && edge_slices_match_word_case_insensitive(key, key_len, "solana")) {
+        return 6;
+    }
+
+    return 0;
+}
+
+__device__ int keyboard_run_len(const char* key, int key_len) {
+    if (key_len <= 0 || !is_ascii_alpha(static_cast<unsigned char>(key[0]))) {
+        return 0;
+    }
+
+    constexpr const char* KEYBOARD_ROWS[] = {
+        "qwertyuiop",
+        "poiuytrewq",
+        "asdfghjkl",
+        "lkjhgfdsa",
+        "zxcvbnm",
+        "mnbvcxz",
+    };
+    constexpr int KEYBOARD_ROW_COUNT = static_cast<int>(sizeof(KEYBOARD_ROWS) / sizeof(KEYBOARD_ROWS[0]));
+
+    int best = 0;
+    for (int row_index = 0; row_index < KEYBOARD_ROW_COUNT; ++row_index) {
+        const char* row = KEYBOARD_ROWS[row_index];
+        int start = -1;
+        int row_len = 0;
+        while (row[row_len] != '\0') {
+            if (static_cast<unsigned char>(row[row_len]) == normalize_aesthetic_char(static_cast<unsigned char>(key[0]))) {
+                start = row_len;
+            }
+            ++row_len;
+        }
+        if (start < 0) {
+            continue;
+        }
+
+        int len = 1;
+        while (start + len < row_len
+            && len < key_len
+            && is_ascii_alpha(static_cast<unsigned char>(key[len]))
+            && normalize_aesthetic_char(static_cast<unsigned char>(key[len]))
+                == static_cast<unsigned char>(row[start + len])) {
+            ++len;
+        }
+        if (len > best) {
+            best = len;
+        }
+    }
+
+    return best;
+}
+
+__device__ int paired_digit_stair_run_len(const char* key, int key_len) {
+    if (key_len < 6 || key[0] < '1' || key[0] > '9' || key[0] != key[1]) {
+        return 0;
+    }
+
+    int best = 0;
+    const int steps[4] = { 1, -1, 2, -2 };
+    for (int step : steps) {
+        int pairs = 1;
+        while (pairs * 2 < key_len) {
+            const int idx = pairs * 2;
+            if (idx + 1 >= key_len
+                || key[idx] < '1'
+                || key[idx] > '9'
+                || key[idx + 1] < '1'
+                || key[idx + 1] > '9'
+                || key[idx] != key[idx + 1]
+                || static_cast<int>(key[idx] - '0') != static_cast<int>(key[idx - 2] - '0') + step) {
+                break;
+            }
+            ++pairs;
+        }
+
+        if (pairs >= 2 && pairs * 2 > best) {
+            best = pairs * 2;
+        }
+    }
+
+    return best;
+}
+
+__device__ int best_aesthetic_run_len(const char* key, int key_len) {
+    const int repeated = repeated_run_len(key, key_len);
+    const int alternating = alternating_digit_run_len(key, key_len);
+    const int digits = arithmetic_digit_run_len(key, key_len);
+    const int alpha = sequential_alpha_run_len(key, key_len);
+    const int keyboard = keyboard_run_len(key, key_len);
+    const int paired_digits = paired_digit_stair_run_len(key, key_len);
+
+    int best = repeated;
+    if (alternating > best) best = alternating;
+    if (digits > best) best = digits;
+    if (alpha > best) best = alpha;
+    if (keyboard > best) best = keyboard;
+    if (paired_digits > best) best = paired_digits;
+    return best;
+}
+
+__device__ int best_aesthetic_prefix_len(const char* key, int key_len) {
+    return best_aesthetic_run_len(key, key_len);
+}
+
 __device__ bool grouped_rule_matches(const char* key, int key_len, int* matched_prefix_index, int* matched_suffix_index) {
     if (GPU_PREFIX_COUNT == 0 && GPU_SUFFIX_COUNT == 0) {
         *matched_prefix_index = -1;
@@ -508,40 +752,52 @@ __device__ bool grouped_rule_matches(const char* key, int key_len, int* matched_
     return false;
 }
 
-__device__ bool extra_total_match(const char* key, int key_len, int* matched_prefix_index, int* matched_suffix_index) {
+__device__ bool extra_total_match(const char* key, int key_len, int* matched_prefix_len, int* matched_suffix_len) {
     if (GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS <= 0) {
         return false;
     }
 
-    int best_prefix_index = -1;
-    int best_prefix_len = 0;
-    for (int prefix_index = 0; prefix_index < GPU_PREFIX_COUNT; ++prefix_index) {
-        if (!prefix_entry_matches(key, key_len, prefix_index)) {
-            continue;
-        }
-
-        const int len = GPU_PREFIX_LENGTHS[prefix_index];
-        if (len > best_prefix_len) {
-            best_prefix_len = len;
-            best_prefix_index = prefix_index;
-        }
+    char reversed[MAX_ADDRESS_LEN];
+    for (int i = 0; i < key_len; ++i) {
+        reversed[i] = key[key_len - 1 - i];
     }
 
-    int best_suffix_index = -1;
-    int best_suffix_len = 0;
-    for (int suffix_index = 0; suffix_index < GPU_SUFFIX_COUNT; ++suffix_index) {
-        if (!suffix_entry_matches(key, key_len, suffix_index)) {
-            continue;
-        }
-
-        const int len = GPU_SUFFIX_LENGTHS[suffix_index];
-        if (len > best_suffix_len) {
-            best_suffix_len = len;
-            best_suffix_index = suffix_index;
-        }
+    // Lane 1: mirrored exact-fragment specials that are rarer than the generic fallback.
+    const int alpha_alt_prefix_len = alternating_alpha_run_len(key, key_len);
+    const int alpha_alt_suffix_len = alternating_alpha_run_len(reversed, key_len);
+    if (alpha_alt_prefix_len >= AESTHETIC_MIN_SIDE_LEN
+        && alpha_alt_suffix_len >= AESTHETIC_MIN_SIDE_LEN
+        && edge_slices_match_exact(key, key_len, alpha_alt_prefix_len, alpha_alt_suffix_len)
+        && alpha_alt_prefix_len + alpha_alt_suffix_len >= GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS) {
+        *matched_prefix_len = alpha_alt_prefix_len;
+        *matched_suffix_len = alpha_alt_suffix_len;
+        return true;
     }
 
-    if (best_prefix_index < 0 && best_suffix_index < 0) {
+    const int repeated_chunk_prefix_len = repeated_chunk_run_len(key, key_len);
+    const int repeated_chunk_suffix_len = repeated_chunk_run_len(reversed, key_len);
+    if (repeated_chunk_prefix_len >= AESTHETIC_MIN_SIDE_LEN
+        && repeated_chunk_suffix_len >= AESTHETIC_MIN_SIDE_LEN
+        && edge_slices_match_exact(key, key_len, repeated_chunk_prefix_len, repeated_chunk_suffix_len)
+        && repeated_chunk_prefix_len + repeated_chunk_suffix_len >= GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS) {
+        *matched_prefix_len = repeated_chunk_prefix_len;
+        *matched_suffix_len = repeated_chunk_suffix_len;
+        return true;
+    }
+
+    // Lane 2: curated mirrored words, matched case-insensitively on both sides.
+    const int mirrored_word_len =
+        mirrored_curated_word_len(key, key_len, GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS);
+    if (mirrored_word_len > 0) {
+        *matched_prefix_len = mirrored_word_len;
+        *matched_suffix_len = mirrored_word_len;
+        return true;
+    }
+
+    // Lane 3: generic aesthetic fallback.
+    const int best_prefix_len = best_aesthetic_prefix_len(key, key_len);
+    const int best_suffix_len = best_aesthetic_run_len(reversed, key_len);
+    if (best_prefix_len < AESTHETIC_MIN_SIDE_LEN || best_suffix_len < AESTHETIC_MIN_SIDE_LEN) {
         return false;
     }
 
@@ -549,8 +805,8 @@ __device__ bool extra_total_match(const char* key, int key_len, int* matched_pre
         return false;
     }
 
-    *matched_prefix_index = best_prefix_index;
-    *matched_suffix_index = best_suffix_index;
+    *matched_prefix_len = best_prefix_len;
+    *matched_suffix_len = best_suffix_len;
     return true;
 }
 
@@ -563,6 +819,12 @@ __device__ void append_char(char*& out, char* end, char ch) {
 __device__ void append_cstr(char*& out, char* end, const char* text) {
     while (*text != '\0' && out + 1 < end) {
         *out++ = *text++;
+    }
+}
+
+__device__ void append_slice(char*& out, char* end, const char* text, int len) {
+    for (int i = 0; i < len && out + 1 < end; ++i) {
+        *out++ = text[i];
     }
 }
 
@@ -690,9 +952,21 @@ __global__ void vanity_scan(
         const int key_len = static_cast<int>(address_size) - 1;
         int prefix_index = -1;
         int suffix_index = -1;
+        int matched_prefix_len = 0;
+        int matched_suffix_len = 0;
+        const char* match_type = nullptr;
 
-        if (grouped_rule_matches(address, key_len, &prefix_index, &suffix_index)
-            || extra_total_match(address, key_len, &prefix_index, &suffix_index)) {
+        if (grouped_rule_matches(address, key_len, &prefix_index, &suffix_index)) {
+            matched_prefix_len = prefix_index >= 0 ? GPU_PREFIX_LENGTHS[prefix_index] : 0;
+            matched_suffix_len = suffix_index >= 0 ? GPU_SUFFIX_LENGTHS[suffix_index] : 0;
+            match_type = "listed";
+        } else if (extra_total_match(address, key_len, &matched_prefix_len, &matched_suffix_len)) {
+            prefix_index = -1;
+            suffix_index = -1;
+            match_type = "aesthetic";
+        }
+
+        if (matched_prefix_len > 0 || matched_suffix_len > 0) {
             atomicAdd(keys_found, 1);
 
             const bool need_keypair_bytes = emit_base58 || emit_solana_json;
@@ -718,10 +992,20 @@ __global__ void vanity_scan(
 
             append_cstr(out, end, "JSONMATCH {\"address\":\"");
             append_cstr(out, end, address);
+            append_cstr(out, end, "\",\"match_type\":\"");
+            append_cstr(out, end, match_type != nullptr ? match_type : "unknown");
             append_cstr(out, end, "\",\"matched_prefix\":\"");
-            append_cstr(out, end, prefix_index >= 0 ? GPU_PREFIXES[prefix_index] : "");
+            if (prefix_index >= 0) {
+                append_cstr(out, end, GPU_PREFIXES[prefix_index]);
+            } else {
+                append_slice(out, end, address, matched_prefix_len);
+            }
             append_cstr(out, end, "\",\"matched_suffix\":\"");
-            append_cstr(out, end, suffix_index >= 0 ? GPU_SUFFIXES[suffix_index] : "");
+            if (suffix_index >= 0) {
+                append_cstr(out, end, GPU_SUFFIXES[suffix_index]);
+            } else {
+                append_slice(out, end, address + (key_len - matched_suffix_len), matched_suffix_len);
+            }
             append_cstr(out, end, "\",\"attempts\":");
             append_u64(out, end, attempt_number);
 
@@ -847,9 +1131,11 @@ int main(int argc, char** argv) {
         const double cps = attempts_this_iteration / elapsed.count();
         const double total_cps = total_attempts / total_elapsed.count();
         const double avg_seconds = pattern_stats.average_attempts / total_cps;
+        const char* avg_label =
+            GPU_EXTRA_SAVE_MIN_TOTAL_MATCHED_CHARS > 0 ? "avg listed/match" : "avg match";
 
         std::printf(
-            "%s iter %llu | batch %s in %.1fs | %s | total %s | matches %llu | avg %s/match\n",
+            "%s iter %llu | batch %s in %.1fs | %s | total %s | matches %llu | %s %s\n",
             timestamp(),
             iteration,
             format_count(attempts_this_iteration).c_str(),
@@ -857,6 +1143,7 @@ int main(int argc, char** argv) {
             format_rate(cps).c_str(),
             format_count(total_attempts).c_str(),
             total_matches,
+            avg_label,
             format_duration_brief(avg_seconds).c_str()
         );
         std::fflush(stdout);

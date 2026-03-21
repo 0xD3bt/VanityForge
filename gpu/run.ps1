@@ -12,7 +12,14 @@ if (-not (Test-Path $configFile)) {
 
 $config = Get-Content $configFile -Raw | ConvertFrom-Json
 $resultsPath = Join-Path $root $config.output.results_file
+$aestheticResultsRelativePath = if ($null -ne $config.output.aesthetic_results_file -and "$($config.output.aesthetic_results_file)".Trim().Length -gt 0) {
+    [string]$config.output.aesthetic_results_file
+} else {
+    "private/aesthetic-matches.jsonl"
+}
+$aestheticResultsPath = Join-Path $root $aestheticResultsRelativePath
 $resultsDir = Split-Path -Parent $resultsPath
+$aestheticResultsDir = Split-Path -Parent $aestheticResultsPath
 $saveFilterEnabled = $null -ne $config.output.enable_save_filter -and [bool]$config.output.enable_save_filter
 $minTotalMatchedChars = if ($null -ne $config.output.min_total_matched_chars) { [int]$config.output.min_total_matched_chars } else { 0 }
 
@@ -39,6 +46,10 @@ if ($resultsDir) {
     New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
 }
 
+if ($aestheticResultsDir) {
+    New-Item -ItemType Directory -Force -Path $aestheticResultsDir | Out-Null
+}
+
 $privateKeyFormats = Get-PrivateKeyFormats $config.output
 
 & (Join-Path $PSScriptRoot "build.ps1") `
@@ -60,9 +71,15 @@ foreach ($format in $privateKeyFormats) {
 }
 
 if ($saveFilterEnabled) {
-    Write-Host "Listed targets: always saved"
+    Write-Host "Listed file   : $resultsPath"
     if ($minTotalMatchedChars -gt 0) {
-        Write-Host ("Extra saves   : total matched chars >= {0}" -f $minTotalMatchedChars)
+        Write-Host "Aesthetic file: $aestheticResultsPath"
+    }
+    Write-Host "Save policy   : listed targets always saved"
+    if ($minTotalMatchedChars -gt 0) {
+        Write-Host ("Aesthetic     : on  | each side >= 5 | total >= {0}" -f $minTotalMatchedChars)
+    } else {
+        Write-Host "Aesthetic     : off"
     }
 }
 
@@ -70,7 +87,12 @@ if ($saveFilterEnabled) {
     $line = "$_"
     if ($line.StartsWith("JSONMATCH ")) {
         $json = $line.Substring(10)
-        Add-Content -Path $resultsPath -Value $json -Encoding ascii
+        $targetPath = if ($json -match '"match_type"\s*:\s*"aesthetic"') {
+            $aestheticResultsPath
+        } else {
+            $resultsPath
+        }
+        Add-Content -Path $targetPath -Value $json -Encoding ascii
     } else {
         Write-Host $line
     }

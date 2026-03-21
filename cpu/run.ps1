@@ -58,6 +58,12 @@ if ($hasGroupedRules) {
 }
 
 $resultsPath = Join-Path $root $config.output.results_file
+$aestheticResultsRelativePath = if ($null -ne $config.output.aesthetic_results_file -and "$($config.output.aesthetic_results_file)".Trim().Length -gt 0) {
+    [string]$config.output.aesthetic_results_file
+} else {
+    "private/aesthetic-matches.jsonl"
+}
+$aestheticResultsPath = Join-Path $root $aestheticResultsRelativePath
 $singleKeypairPath = Join-Path $root $config.output.single_keypair_file
 $matchesDir = Join-Path $root $config.output.matches_dir
 $privateKeyFormats = Get-PrivateKeyFormats $config.output
@@ -67,6 +73,11 @@ $minTotalMatchedChars = if ($null -ne $config.output.min_total_matched_chars) { 
 $resultsDir = Split-Path -Parent $resultsPath
 if ($resultsDir) {
     New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
+}
+
+$aestheticResultsDir = Split-Path -Parent $aestheticResultsPath
+if ($aestheticResultsDir) {
+    New-Item -ItemType Directory -Force -Path $aestheticResultsDir | Out-Null
 }
 
 $singleKeypairDir = Split-Path -Parent $singleKeypairPath
@@ -110,7 +121,7 @@ if ($config.cpu.max_attempts -gt 0) {
 }
 
 if ($config.cpu.keep_running) {
-    $args += @("--keep-running", "--results-file", $resultsPath)
+    $args += @("--keep-running", "--results-file", $resultsPath, "--aesthetic-results-file", $aestheticResultsPath)
     if ($saveFilterEnabled) {
         if ($minTotalMatchedChars -gt 0) {
             $args += @("--min-total-matched-chars", [string]$minTotalMatchedChars)

@@ -18,6 +18,8 @@ use ed25519_dalek::SigningKey;
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 
 const BASE58_ALPHABET: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const AESTHETIC_MIN_SIDE_LEN: usize = 5;
+const MIRRORED_AESTHETIC_WORDS: [&str; 2] = ["pumpfun", "solana"];
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Multithreaded Solana vanity address generator")]
@@ -49,6 +51,10 @@ struct Cli {
     /// JSONL file used when --keep-running is enabled.
     #[arg(long, default_value = "matches.jsonl")]
     results_file: PathBuf,
+
+    /// JSONL file used for aesthetic keep-running matches.
+    #[arg(long, default_value = "private/aesthetic-matches.jsonl")]
+    aesthetic_results_file: PathBuf,
 
     /// Also write one keypair/pubkey file pair per match.
     #[arg(long, default_value_t = false)]
@@ -94,6 +100,7 @@ struct MatchResult {
     keypair_bytes: Vec<u8>,
     attempts: u64,
     elapsed: Duration,
+    match_type: String,
     matched_prefix: Option<String>,
     matched_suffix: Option<String>,
 }
@@ -123,7 +130,10 @@ fn main() -> Result<()> {
     println!("Key formats   : {}", describe_key_formats(&key_formats));
     println!("Keep running  : {}", if cli.keep_running { "yes" } else { "no" });
     if cli.keep_running {
-        println!("Results file  : {}", cli.results_file.display());
+        println!("Listed file   : {}", cli.results_file.display());
+        if cli.min_total_matched_chars > 0 {
+            println!("Aesthetic file: {}", cli.aesthetic_results_file.display());
+        }
         println!(
             "Match files   : {}",
             if cli.write_match_files { "enabled" } else { "disabled" }
@@ -131,12 +141,15 @@ fn main() -> Result<()> {
         if cli.write_match_files {
             println!("Matches dir   : {}", cli.matches_dir.display());
         }
-        println!("Listed targets: always saved");
+        println!("Save policy   : listed targets always saved");
         if cli.min_total_matched_chars > 0 {
             println!(
-                "Extra saves   : total matched chars >= {}",
+                "Aesthetic     : on  | each side >= {} | total >= {}",
+                AESTHETIC_MIN_SIDE_LEN,
                 cli.min_total_matched_chars
             );
+        } else {
+            println!("Aesthetic     : off");
         }
     } else {
         println!("Output        : {}", cli.out.display());
@@ -160,6 +173,11 @@ fn main() -> Result<()> {
     }
 
     let average_attempts_estimate = estimate_average_attempts(&filters);
+    let avg_label = if cli.keep_running && cli.min_total_matched_chars > 0 {
+        "avg listed/match"
+    } else {
+        "avg match"
+    };
 
     println!();
     println!("Press Ctrl+C to stop.");
@@ -207,7 +225,7 @@ fn main() -> Result<()> {
                 let verifying_key = signing_key.verifying_key();
                 let address = bs58::encode(verifying_key.as_bytes()).into_string();
 
-                if let Some((matched_prefix, matched_suffix)) =
+                if let Some((match_type, matched_prefix, matched_suffix)) =
                     match_address(&address, &filters, extra_min_total)
                 {
                     let mut keypair_bytes = Vec::with_capacity(64);
@@ -219,6 +237,7 @@ fn main() -> Result<()> {
                         keypair_bytes,
                         attempts: current_attempt,
                         elapsed: start.elapsed(),
+                        match_type,
                         matched_prefix,
                         matched_suffix,
                     });
@@ -281,11 +300,12 @@ fn main() -> Result<()> {
                 let avg_seconds = average_attempts_estimate / rate.max(1.0);
 
                 println!(
-                    "Progress      : total {} | elapsed {} | {} | matches {} | avg {}/match",
+                    "Progress      : total {} | elapsed {} | {} | matches {} | {} {}",
                     format_count_human(total),
                     format_duration_brief(elapsed.as_secs_f64()),
                     format_rate_human(rate),
                     human_int(found as u64),
+                    avg_label,
                     format_duration_brief(avg_seconds)
                 );
 
@@ -333,7 +353,10 @@ fn main() -> Result<()> {
             if cli.keep_running && found > 0 {
                 println!();
                 println!("Finished with {} matches.", human_int(found as u64));
-                println!("Results file  : {}", cli.results_file.display());
+                println!("Listed file   : {}", cli.results_file.display());
+                if cli.min_total_matched_chars > 0 {
+                    println!("Aesthetic file: {}", cli.aesthetic_results_file.display());
+                }
                 if cli.write_match_files {
                     println!("Matches dir   : {}", cli.matches_dir.display());
                 }
@@ -392,6 +415,10 @@ fn validate_inputs(cli: &Cli, filters: &TargetFilters) -> Result<()> {
 
     if cli.keep_running && cli.results_file.as_os_str().is_empty() {
         bail!("--results-file must not be empty");
+    }
+
+    if cli.keep_running && cli.aesthetic_results_file.as_os_str().is_empty() {
+        bail!("--aesthetic-results-file must not be empty");
     }
 
     if cli.keep_running && cli.write_match_files && cli.matches_dir.as_os_str().is_empty() {
@@ -477,47 +504,347 @@ fn match_listed_address(address: &str, filters: &TargetFilters) -> Option<(Optio
     Some((matched_prefix, matched_suffix))
 }
 
-fn longest_matching_prefix(address: &str, filters: &TargetFilters) -> Option<String> {
-    filters
-        .prefixes
-        .iter()
-        .filter(|prefix| address.starts_with(prefix.as_str()))
-        .max_by_key(|prefix| prefix.len())
-        .cloned()
+fn normalized_aesthetic_byte(byte: u8) -> u8 {
+    if byte.is_ascii_alphabetic() {
+        byte.to_ascii_lowercase()
+    } else {
+        byte
+    }
 }
 
-fn longest_matching_suffix(address: &str, filters: &TargetFilters) -> Option<String> {
-    filters
-        .suffixes
+fn is_ascii_alpha(byte: u8) -> bool {
+    normalized_aesthetic_byte(byte).is_ascii_lowercase()
+}
+
+fn repeated_run_len(bytes: &[u8]) -> usize {
+    if bytes.is_empty() {
+        return 0;
+    }
+
+    let first = normalized_aesthetic_byte(bytes[0]);
+    bytes.iter()
+        .take_while(|byte| normalized_aesthetic_byte(**byte) == first)
+        .count()
+}
+
+fn alternating_digit_run_len(bytes: &[u8]) -> usize {
+    if bytes.len() < 2 {
+        return 0;
+    }
+
+    if !bytes[0].is_ascii_digit() || !bytes[1].is_ascii_digit() {
+        return 0;
+    }
+
+    let first = bytes[0];
+    let second = bytes[1];
+    if first == second {
+        return 0;
+    }
+
+    let mut len = 2;
+    while len < bytes.len() {
+        let expected = if len % 2 == 0 { first } else { second };
+        if normalized_aesthetic_byte(bytes[len]) != expected {
+            break;
+        }
+        len += 1;
+    }
+
+    len
+}
+
+fn alternating_alpha_run_len(bytes: &[u8]) -> usize {
+    if bytes.len() < 2 {
+        return 0;
+    }
+
+    if !is_ascii_alpha(bytes[0]) || !is_ascii_alpha(bytes[1]) {
+        return 0;
+    }
+
+    let first = normalized_aesthetic_byte(bytes[0]);
+    let second = normalized_aesthetic_byte(bytes[1]);
+    if first == second {
+        return 0;
+    }
+
+    let mut len = 2;
+    while len < bytes.len() {
+        let expected = if len % 2 == 0 { first } else { second };
+        if !is_ascii_alpha(bytes[len]) || normalized_aesthetic_byte(bytes[len]) != expected {
+            break;
+        }
+        len += 1;
+    }
+
+    len
+}
+
+fn arithmetic_digit_run_len(bytes: &[u8]) -> usize {
+    if bytes.is_empty() || !bytes[0].is_ascii_digit() {
+        return 0;
+    }
+
+    let mut best = 1;
+    for step in [1_i16, -1, 2, -2] {
+        let mut len = 1;
+        while len < bytes.len() {
+            if !bytes[len].is_ascii_digit() {
+                break;
+            }
+
+            let previous = i16::from(bytes[len - 1] - b'0');
+            let current = i16::from(bytes[len] - b'0');
+            if current != previous + step {
+                break;
+            }
+            len += 1;
+        }
+        best = best.max(len);
+    }
+
+    best
+}
+
+fn sequential_alpha_run_len(bytes: &[u8]) -> usize {
+    if bytes.is_empty() || !bytes[0].is_ascii_alphabetic() {
+        return 0;
+    }
+
+    let mut asc = 1;
+    while asc < bytes.len()
+        && bytes[asc].is_ascii_alphabetic()
+        && normalized_aesthetic_byte(bytes[asc])
+            == normalized_aesthetic_byte(bytes[asc - 1]).saturating_add(1)
+    {
+        asc += 1;
+    }
+
+    let mut desc = 1;
+    while desc < bytes.len()
+        && bytes[desc].is_ascii_alphabetic()
+        && normalized_aesthetic_byte(bytes[desc])
+            == normalized_aesthetic_byte(bytes[desc - 1]).saturating_sub(1)
+    {
+        desc += 1;
+    }
+
+    asc.max(desc)
+}
+
+fn repeated_chunk_run_len(bytes: &[u8]) -> usize {
+    if bytes.len() < 4 {
+        return 0;
+    }
+
+    let mut best = 0;
+    for chunk_len in 2..=(bytes.len() / 2) {
+        let mut len = chunk_len;
+        while len < bytes.len() {
+            let expected =
+                normalized_aesthetic_byte(bytes[len % chunk_len]);
+            if normalized_aesthetic_byte(bytes[len]) != expected {
+                break;
+            }
+            len += 1;
+        }
+
+        if len >= chunk_len * 2 {
+            best = best.max(len);
+        }
+    }
+
+    best
+}
+
+fn edge_slices_match_exact(address: &str, prefix_len: usize, suffix_len: usize) -> bool {
+    if prefix_len == 0 || prefix_len != suffix_len || address.len() < prefix_len + suffix_len {
+        return false;
+    }
+
+    address.as_bytes()[..prefix_len] == address.as_bytes()[address.len() - suffix_len..]
+}
+
+fn edge_slices_match_word_case_insensitive(address: &str, word: &str) -> bool {
+    let bytes = address.as_bytes();
+    let word_bytes = word.as_bytes();
+    if bytes.len() < word_bytes.len() * 2 {
+        return false;
+    }
+
+    bytes[..word_bytes.len()]
         .iter()
-        .filter(|suffix| address.ends_with(suffix.as_str()))
-        .max_by_key(|suffix| suffix.len())
-        .cloned()
+        .zip(word_bytes.iter())
+        .all(|(left, expected)| normalized_aesthetic_byte(*left) == *expected)
+        && bytes[bytes.len() - word_bytes.len()..]
+            .iter()
+            .zip(word_bytes.iter())
+            .all(|(right, expected)| normalized_aesthetic_byte(*right) == *expected)
+}
+
+fn mirrored_curated_word_match(
+    address: &str,
+    min_total_chars: usize,
+) -> Option<(Option<String>, Option<String>)> {
+    for word in MIRRORED_AESTHETIC_WORDS {
+        if word.len() * 2 >= min_total_chars && edge_slices_match_word_case_insensitive(address, word) {
+            let prefix = address[..word.len()].to_string();
+            let suffix = address[address.len() - word.len()..].to_string();
+            return Some((Some(prefix), Some(suffix)));
+        }
+    }
+
+    None
+}
+
+fn keyboard_run_len(bytes: &[u8]) -> usize {
+    if bytes.is_empty() || !is_ascii_alpha(bytes[0]) {
+        return 0;
+    }
+
+    const KEYBOARD_ROWS: [&[u8]; 6] = [
+        b"qwertyuiop",
+        b"poiuytrewq",
+        b"asdfghjkl",
+        b"lkjhgfdsa",
+        b"zxcvbnm",
+        b"mnbvcxz",
+    ];
+
+    let mut best = 0;
+    for row in KEYBOARD_ROWS {
+        if let Some(start) = row
+            .iter()
+            .position(|ch| *ch == normalized_aesthetic_byte(bytes[0]))
+        {
+            let mut len = 1;
+            while start + len < row.len()
+                && len < bytes.len()
+                && is_ascii_alpha(bytes[len])
+                && normalized_aesthetic_byte(bytes[len]) == row[start + len]
+            {
+                len += 1;
+            }
+            best = best.max(len);
+        }
+    }
+
+    best
+}
+
+fn paired_digit_stair_run_len(bytes: &[u8]) -> usize {
+    if bytes.len() < 6 || !bytes[0].is_ascii_digit() || bytes[0] != bytes[1] {
+        return 0;
+    }
+
+    let mut best = 0;
+    for step in [1_i16, -1, 2, -2] {
+        let mut pairs = 1;
+        while pairs * 2 < bytes.len() {
+            let idx = pairs * 2;
+            if idx + 1 >= bytes.len()
+                || !bytes[idx].is_ascii_digit()
+                || !bytes[idx + 1].is_ascii_digit()
+                || bytes[idx] != bytes[idx + 1]
+            {
+                break;
+            }
+
+            let previous = i16::from(bytes[idx - 2] - b'0');
+            let current = i16::from(bytes[idx] - b'0');
+            if current != previous + step {
+                break;
+            }
+
+            pairs += 1;
+        }
+
+        if pairs >= 2 {
+            best = best.max(pairs * 2);
+        }
+    }
+
+    best
+}
+
+fn best_aesthetic_run_len(bytes: &[u8]) -> usize {
+    repeated_run_len(bytes)
+        .max(alternating_digit_run_len(bytes))
+        .max(arithmetic_digit_run_len(bytes))
+        .max(sequential_alpha_run_len(bytes))
+        .max(keyboard_run_len(bytes))
+        .max(paired_digit_stair_run_len(bytes))
+}
+
+fn best_aesthetic_prefix_len(address: &str) -> usize {
+    best_aesthetic_run_len(address.as_bytes())
+}
+
+fn aesthetic_match(address: &str, min_total_chars: usize) -> Option<(Option<String>, Option<String>)> {
+    if min_total_chars == 0 {
+        return None;
+    }
+
+    let bytes = address.as_bytes();
+    let reversed = bytes.iter().rev().copied().collect::<Vec<_>>();
+
+    // Lane 1: mirrored exact-fragment specials that are rarer than the generic fallback.
+    let alpha_alt_prefix_len = alternating_alpha_run_len(bytes);
+    let alpha_alt_suffix_len = alternating_alpha_run_len(&reversed);
+    if alpha_alt_prefix_len >= AESTHETIC_MIN_SIDE_LEN
+        && alpha_alt_suffix_len >= AESTHETIC_MIN_SIDE_LEN
+        && edge_slices_match_exact(address, alpha_alt_prefix_len, alpha_alt_suffix_len)
+        && alpha_alt_prefix_len + alpha_alt_suffix_len >= min_total_chars
+    {
+        let prefix = address[..alpha_alt_prefix_len].to_string();
+        let suffix = address[address.len() - alpha_alt_suffix_len..].to_string();
+        return Some((Some(prefix), Some(suffix)));
+    }
+
+    let repeated_chunk_prefix_len = repeated_chunk_run_len(bytes);
+    let repeated_chunk_suffix_len = repeated_chunk_run_len(&reversed);
+    if repeated_chunk_prefix_len >= AESTHETIC_MIN_SIDE_LEN
+        && repeated_chunk_suffix_len >= AESTHETIC_MIN_SIDE_LEN
+        && edge_slices_match_exact(address, repeated_chunk_prefix_len, repeated_chunk_suffix_len)
+        && repeated_chunk_prefix_len + repeated_chunk_suffix_len >= min_total_chars
+    {
+        let prefix = address[..repeated_chunk_prefix_len].to_string();
+        let suffix = address[address.len() - repeated_chunk_suffix_len..].to_string();
+        return Some((Some(prefix), Some(suffix)));
+    }
+
+    // Lane 2: curated mirrored words, matched case-insensitively on both sides.
+    if let Some(result) = mirrored_curated_word_match(address, min_total_chars) {
+        return Some(result);
+    }
+
+    // Lane 3: generic aesthetic fallback.
+    let prefix_len = best_aesthetic_prefix_len(address);
+    let suffix_len = best_aesthetic_run_len(&reversed);
+    if prefix_len < AESTHETIC_MIN_SIDE_LEN || suffix_len < AESTHETIC_MIN_SIDE_LEN {
+        return None;
+    }
+    if prefix_len + suffix_len < min_total_chars {
+        return None;
+    }
+
+    let prefix = address[..prefix_len].to_string();
+    let suffix = address[address.len() - suffix_len..].to_string();
+    Some((Some(prefix), Some(suffix)))
 }
 
 fn match_address(
     address: &str,
     filters: &TargetFilters,
     extra_min_total_chars: usize,
-) -> Option<(Option<String>, Option<String>)> {
+) -> Option<(String, Option<String>, Option<String>)> {
     if let Some(listed_match) = match_listed_address(address, filters) {
-        return Some(listed_match);
+        return Some(("listed".to_string(), listed_match.0, listed_match.1));
     }
 
-    if extra_min_total_chars == 0 {
-        return None;
-    }
-
-    let matched_prefix = longest_matching_prefix(address, filters);
-    let matched_suffix = longest_matching_suffix(address, filters);
-    let total_len =
-        matched_prefix.as_deref().map_or(0, str::len) + matched_suffix.as_deref().map_or(0, str::len);
-
-    if total_len >= extra_min_total_chars && (matched_prefix.is_some() || matched_suffix.is_some()) {
-        Some((matched_prefix, matched_suffix))
-    } else {
-        None
-    }
+    aesthetic_match(address, extra_min_total_chars)
+        .map(|(matched_prefix, matched_suffix)| ("aesthetic".to_string(), matched_prefix, matched_suffix))
 }
 
 fn normalize_fragments(fragments: Vec<String>) -> Vec<String> {
@@ -736,6 +1063,13 @@ fn prepare_keep_running_outputs(cli: &Cli) -> Result<()> {
         }
     }
 
+    if let Some(parent) = cli.aesthetic_results_file.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+    }
+
     if cli.write_match_files {
         fs::create_dir_all(&cli.matches_dir)
             .with_context(|| format!("failed to create {}", cli.matches_dir.display()))?;
@@ -758,14 +1092,19 @@ fn append_match_artifacts(
     };
 
     let line = make_result_json(match_index, result, key_formats, Some(&written_paths));
+    let target_results_file = if result.match_type == "aesthetic" {
+        &cli.aesthetic_results_file
+    } else {
+        &cli.results_file
+    };
 
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&cli.results_file)
-        .with_context(|| format!("failed to open {}", cli.results_file.display()))?;
+        .open(target_results_file)
+        .with_context(|| format!("failed to open {}", target_results_file.display()))?;
     writeln!(file, "{line}")
-        .with_context(|| format!("failed to append {}", cli.results_file.display()))?;
+        .with_context(|| format!("failed to append {}", target_results_file.display()))?;
     Ok(())
 }
 
@@ -915,6 +1254,7 @@ fn make_result_json(
     let mut obj = serde_json::Map::new();
     obj.insert("index".to_string(), serde_json::json!(index));
     obj.insert("address".to_string(), serde_json::json!(result.address));
+    obj.insert("match_type".to_string(), serde_json::json!(result.match_type));
     obj.insert("matched_prefix".to_string(), serde_json::json!(result.matched_prefix));
     obj.insert("matched_suffix".to_string(), serde_json::json!(result.matched_suffix));
     obj.insert("attempts".to_string(), serde_json::json!(result.attempts));

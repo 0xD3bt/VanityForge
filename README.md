@@ -351,6 +351,7 @@ Example:
   },
   "output": {
     "results_file": "runs/matches.jsonl",
+    "aesthetic_results_file": "private/aesthetic-matches.jsonl",
     "single_keypair_file": "private/vanity-keypair.json",
     "private_key_formats": ["base58"],
     "write_match_files": false,
@@ -379,10 +380,11 @@ Key settings:
 - `patterns.prefix_file`: text file with one allowed prefix per line
 - `patterns.suffix_file`: text file with one allowed suffix per line
 - `output.results_file`: append-only JSONL results file
+- `output.aesthetic_results_file`: append-only JSONL file for aesthetic matches; defaults to `private/aesthetic-matches.jsonl`
 - `output.single_keypair_file`: base output path used by CPU one-hit mode
 - `output.private_key_formats`: which private-key representations to save
 - `output.enable_save_filter`: show save-policy details for keep-running mode
-- `output.min_total_matched_chars`: additional total-chars threshold across the configured prefix/suffix pools; listed configured targets still save even when they are below this value
+- `output.min_total_matched_chars`: additional aesthetic save threshold; listed configured targets still save even when they are below this value
 - `cpu.threads`: `0` means auto; any positive number pins the worker count
 - `cpu.max_attempts`: `0` means unlimited
 - `gpu.max_iterations`: `0` means unlimited
@@ -391,8 +393,8 @@ Key settings:
 
 Default output layout:
 
-- `runs/`: JSONL run output and other run artifacts; treat as secret-bearing with the current `base58` default unless you switch `output.private_key_formats` to `["none"]`
-- `private/`: secret-bearing keypair files and per-match secret exports
+- `runs/`: listed/config-target JSONL run output and other run artifacts; treat as secret-bearing with the current `base58` default unless you switch `output.private_key_formats` to `["none"]`
+- `private/`: aesthetic JSONL output, secret-bearing keypair files, and per-match secret exports
 
 Config value conventions:
 
@@ -588,8 +590,9 @@ Example:
 Progress timing note:
 
 - the live `avg .../match` field is an expected average time per match at the current rate, not a guaranteed countdown to the next hit
-- in GPU keep-running mode, match rows are appended to `output.results_file` and the terminal stays focused on iteration/progress updates
-- when `output.enable_save_filter` is `true`, the runner prints `Listed targets: always saved` and, if configured, `Extra saves   : total matched chars >= X` before the live status stream starts
+- in GPU keep-running mode, listed/config matches are appended to `output.results_file`, aesthetic matches are appended to `output.aesthetic_results_file`, and the terminal stays focused on iteration/progress updates
+- when `output.enable_save_filter` is `true`, the runner prints `Save policy   : listed targets always saved` plus `Aesthetic     : on|off ...` before the live status stream starts
+- when the aesthetic path is enabled, the live `avg ...` timing remains an estimate for listed/config targets only
 
 If you need larger pattern sets or longer entries, use the CPU engine.
 
@@ -677,12 +680,26 @@ Behavior:
 
 - loads prefixes and suffixes from the shared pattern files
 - supports one-hit mode or keep-running mode
-- can write one JSONL file for all matches
+- can write separate JSONL files for listed/config matches and aesthetic matches
 - can optionally write one file per match
 
-When `cpu.keep_running` is `true`, matches are appended to `output.results_file`.
+When `cpu.keep_running` is `true`, listed/config matches are appended to `output.results_file` and aesthetic matches are appended to `output.aesthetic_results_file`.
 
-Keep-running mode always persists exact listed targets from your configured pattern/rule set. If `output.min_total_matched_chars` is set, that threshold also enables extra saves for stronger prefix+suffix combinations found from the configured prefix/suffix pools, without blocking listed targets below the threshold.
+Keep-running mode always persists exact listed targets from your configured pattern/rule set. If `output.min_total_matched_chars` is set, that threshold also enables extra aesthetic saves without blocking listed targets below the threshold.
+
+The extra aesthetic path is meant for arbitrary nice-looking `5x5+`-style hits while your project-specific search is already running. It currently recognizes:
+
+- repeated-character runs such as `55555...55555` or `AAAAA...AAAAA`
+- ascending and descending digit runs such as `12345...12345` or `98765...98765`
+- ascending and descending alphabetic runs, including case-insensitive letter sequences such as `ABCDE...abcde`
+- alternating digit patterns such as `12121...12121`
+- alternating alphabetic patterns such as `aBaBa...aBaBa`, but only when both sides use the same exact visible alternating fragment
+- repeated chunk patterns such as `123123...123123` or `abcabc...abcabc`, but only when both sides use the same exact visible repeated fragment
+- mirrored curated words such as `SOLANA...SoLanA` or `PUMPFUN...pumpfun`, matched case-insensitively on both sides
+- keyboard-row runs such as `qwert...asdfg`
+- tight numeric motifs such as `112233...13579`
+
+Saved result rows now include `match_type`, which is either `listed` or `aesthetic`.
 
 `cpu.threads: 0` means auto-detect the worker count. `cpu.max_attempts: 0` means run without an attempt limit.
 
@@ -710,7 +727,8 @@ Behavior:
 
 - rebuilds a small generated CUDA config from the shared pattern files
 - uses the configured `gpu.cuda_arch`
-- appends match rows to `output.results_file`
+- appends listed/config match rows to `output.results_file`
+- appends aesthetic match rows to `output.aesthetic_results_file`
 - only emits private-key fields when `output.private_key_formats` is not `["none"]`
 - supports JSONL match output, not CPU-style one-hit companion files
 

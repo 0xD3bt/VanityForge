@@ -65,6 +65,8 @@ powershell -ExecutionPolicy Bypass -File .\gpu\run.ps1 -ConfigPath .local\config
 - `output.private_key_formats` currently defaults to `["base58"]`, so GPU JSONL output should be treated as secret-bearing unless you switch to `["none"]`
 - listed configured targets always save in keep-running mode
 - `output.enable_save_filter` prints the active save policy at startup
-- `output.min_total_matched_chars` acts as an extra save threshold across the configured prefix/suffix pools and does not block listed targets below it
-- when the save filter is enabled, `gpu/run.ps1` prints `Listed targets: always saved` and, if configured, `Extra saves   : total matched chars >= X` before the iteration updates begin
+- `output.min_total_matched_chars` acts as an extra aesthetic save threshold and does not block listed targets below it
+- listed/config matches append to `output.results_file`, while aesthetic matches append to `output.aesthetic_results_file`
+- when the save filter is enabled, `gpu/run.ps1` prints `Save policy   : listed targets always saved` plus `Aesthetic     : on|off ...` before the iteration updates begin
+- when the aesthetic path is enabled, the live `avg ...` timing remains an estimate for listed/config targets only
 - the scanner is derived from Apache-licensed CUDA Solana `ed25519` code from `vendor-solanity`

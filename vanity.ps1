@@ -227,6 +227,7 @@ function Show-CurrentConfig([string]$TargetConfigPath) {
     Write-Host "Suffix entries      : $($suffixReport.TotalCount)"
     Write-Host "Suffix preview      : $(if ($suffixReport.Preview.Count -gt 0) { $suffixReport.Preview -join ', ' } elseif ($suffixReport.Exists) { '<empty>' } else { '<missing file>' })"
     Write-Host "Results file        : $($config.output.results_file)"
+    Write-Host "Aesthetic file      : $(if ($null -ne $config.output.aesthetic_results_file -and "$($config.output.aesthetic_results_file)".Trim().Length -gt 0) { $config.output.aesthetic_results_file } else { 'private/aesthetic-matches.jsonl' })"
     Write-Host "Single keypair file : $($config.output.single_keypair_file)"
     Write-Host "Private key formats : $(Format-ValueList $config.output.private_key_formats)"
     Write-Host "Write match files   : $($config.output.write_match_files)"
@@ -683,6 +684,7 @@ function Show-InitSummary($Plan) {
         }
     }
     Write-Host "Results file       : $($Plan.ResultsFile)"
+    Write-Host "Aesthetic file     : $($Plan.AestheticResultsFile)"
     Write-Host "Keypair file       : $($Plan.SingleKeypairFile)"
     Write-Host "After setup        : $($Plan.PostAction)"
     if ($Plan.PostAction -eq "smoke") {
@@ -758,9 +760,15 @@ function New-InitPlan([string]$TargetConfigPath) {
 
     $customOutputs = Read-YesNo "Customize output file paths?" $false
     $resultsFile = $existingConfig.output.results_file
+    $aestheticResultsFile = if ($null -ne $existingConfig.output.aesthetic_results_file -and "$($existingConfig.output.aesthetic_results_file)".Trim().Length -gt 0) {
+        $existingConfig.output.aesthetic_results_file
+    } else {
+        "private/aesthetic-matches.jsonl"
+    }
     $singleKeypairFile = $existingConfig.output.single_keypair_file
     if ($customOutputs) {
         $resultsFile = Read-DefaultedText "Results JSONL path" $resultsFile
+        $aestheticResultsFile = Read-DefaultedText "Aesthetic JSONL path" $aestheticResultsFile
         $singleKeypairFile = Read-DefaultedText "Single keypair output path" $singleKeypairFile
     }
 
@@ -819,6 +827,7 @@ function New-InitPlan([string]$TargetConfigPath) {
         PrefixInfo = $prefixInfo
         SuffixInfo = $suffixInfo
         ResultsFile = $resultsFile
+        AestheticResultsFile = $aestheticResultsFile
         SingleKeypairFile = $singleKeypairFile
         PostAction = $postAction
         SmokeCpuAttempts = $smokeCpuAttempts
@@ -847,6 +856,7 @@ function Invoke-Init([string]$TargetConfigPath) {
     $config = Read-ConfigObject $TargetConfigPath
     $config.engine = $plan.Engine
     $config.output.results_file = $plan.ResultsFile
+    $config.output.aesthetic_results_file = $plan.AestheticResultsFile
     $config.output.single_keypair_file = $plan.SingleKeypairFile
 
     if ($plan.Engine -eq "gpu" -and $plan.CudaArch) {
@@ -903,6 +913,7 @@ function Invoke-SmokeTest {
 
     $smokeConfigPath = "runs/smoke-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))-$($config.engine).config.json"
     $config.output.results_file = "runs/smoke-matches.jsonl"
+    $config.output.aesthetic_results_file = "runs/smoke-aesthetic-matches.jsonl"
     $config.output.single_keypair_file = "runs/smoke-keypair.json"
 
     switch ($config.engine) {

@@ -59,10 +59,11 @@ powershell -ExecutionPolicy Bypass -File .\cpu\run.ps1 -ConfigPath .local\config
 
 - `cpu.threads: 0` means auto-detect and use available CPU threads
 - `cpu.max_attempts: 0` means unlimited attempts
-- `cpu.keep_running: true` appends all matches to `output.results_file`
+- `cpu.keep_running: true` appends listed/config matches to `output.results_file` and aesthetic matches to `output.aesthetic_results_file`
 - `cpu.keep_running: false` stops on the first hit and writes companion output files based on `output.single_keypair_file`
 - `output.write_match_files: true` also writes one set of files per match in `output.matches_dir`
 - `output.private_key_formats` currently defaults to `["base58"]`, so result files should be treated as secret-bearing unless you switch to `["none"]`
 - listed configured targets always save in keep-running mode
 - `output.enable_save_filter` prints the active save policy at startup
-- `output.min_total_matched_chars` acts as an extra save threshold across the configured prefix/suffix pools and does not block listed targets below it
+- `output.min_total_matched_chars` acts as an extra aesthetic save threshold and does not block listed targets below it
+- when the aesthetic path is enabled, the live `avg ...` timing remains an estimate for listed/config targets only

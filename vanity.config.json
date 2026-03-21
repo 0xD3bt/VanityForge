@@ -6,6 +6,7 @@
   },
   "output": {
     "results_file": "runs/matches.jsonl",
+    "aesthetic_results_file": "private/aesthetic-matches.jsonl",
     "single_keypair_file": "private/vanity-keypair.json",
     "private_key_formats": ["base58"],
     "write_match_files": false,
